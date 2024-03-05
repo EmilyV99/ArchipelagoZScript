@@ -1,20 +1,135 @@
 #include "json.zh"
 namespace Archipelago
 {
-    namespace Settings
-    {
-        void ap_get_game(char32 buf); //Return your game name
-        long items_handling() : default 101Lb; //return your item handling mode
-        void add_tags(JSONRef ref);
-    }
     using namespace JSON;
     CONFIGB AP_LOG = true;
     CONFIG AP_LOG_COMMUNICATION = 1; // 0 = none, 1 = some, 2 = full
     CONFIGB AP_DEV_LOG = true;
+
+    enum ClientStatus
+    {
+        CLIENT_UNKNOWN = 0,
+        CLIENT_CONNECTED = 5,
+        CLIENT_READY = 10,
+        CLIENT_PLAYING = 20,
+        CLIENT_GOAL = 30
+    };
+
+    DEFINEL ITEM_PROGRESSIVE = 001Lb;
+    DEFINEL ITEM_USEFUL      = 010Lb;
+    DEFINEL ITEM_TRAP        = 100Lb;
+    class NetworkItem
+    {
+        int item_id;
+        int location_id;
+        int player_id;
+        long flags;
+        bool valid;
+        NetworkItem(int iid, int lid, int pid, long fl)
+        {
+            item_id = iid;
+            location_id = lid;
+            player_id = pid;
+            flags = fl;
+            valid = true;
+        }
+        NetworkItem(JSONRef ref)
+        {
+            valid = true;
+
+            JSONRef js = new JSONRef(ref);
+            if(js->sub_find({NULL,{"item"}}))
+                item_id = js->get_int();
+            else valid = false;
+
+            js->from(ref);
+            if(js->sub_find({NULL,{"location"}}))
+                location_id = js->get_int();
+            else valid = false;
+
+            js->from(ref);
+            if(js->sub_find({NULL,{"player"}}))
+                player_id = js->get_int();
+            else valid = false;
+
+            js->from(ref);
+            if(js->sub_find({NULL,{"flags"}}))
+                flags = js->get_long();
+            else valid = false;
+
+            delete js;
+        }
+    }
+    
+    class NetworkPlayer
+    {
+        int team;
+        int slot_id;
+        char32 alias[1];
+        char32 name[1];
+        bool valid;
+        NetworkPlayer(int teamid, int slotid, char32 alias_str, char32 name_str)
+        {
+            team = teamid;
+            slot_id = slotid;
+            sprintf(alias, "%s", alias_str);
+            sprintf(name, "%s", name_str);
+            valid = true;
+        }
+        NetworkPlayer(JSONRef ref)
+        {
+            valid = true;
+
+            JSONRef js = new JSONRef(ref);
+            if(js->sub_find({NULL,{"team"}}))
+                team = js->get_int();
+            else valid = false;
+
+            js->from(ref);
+            if(js->sub_find({NULL,{"slot"}}))
+                slot_id = js->get_int();
+            else valid = false;
+
+            js->from(ref);
+            if(js->sub_find({NULL,{"alias"}}))
+                js->get_trim(alias);
+            else valid = false;
+
+            js->from(ref);
+            if(js->sub_find({NULL,{"name"}}))
+                js->get_trim(name);
+            else valid = false;
+
+            delete js;
+        }
+    }
+
+    namespace Settings
+    {
+        DEFINEL ITEMS_NONE                  = 000Lb;
+        DEFINEL ITEMS_REMOTE                = 001Lb;
+        DEFINEL ITEMS_REMOTE_STARTING       = 101Lb;
+        DEFINEL ITEMS_REMOTE_LOCAL          = 011Lb;
+        DEFINEL ITEMS_REMOTE_STARTING_LOCAL = 111Lb;
+
+        void ap_get_game(char32 buf); //Return your game name
+        long items_handling() : default 101Lb; //return your item handling mode
+        void add_tags(JSONRef ref);
+        void on_room_info(JSONRef ref);
+        void on_connected(JSONRef ref);
+        void on_item_received(NetworkItem itemlist);
+        void on_location_scouts(NetworkItem itemlist);
+        void on_room_update(JSONRef ref);
+        bool on_print_json(JSONRef ref) : default true;
+        void on_bounced(JSONRef ref);
+        void on_retrieved(JSONRef ref);
+        void on_set_reply(JSONRef ref);
+        void do_remove_location(int id);
+    }
     namespace DeathLink
     {
-        char32 death_reason[0];
-        //Optional script; sends deathlink deaths when you die
+        char32 death_reason[1];
+        //Sends deathlink deaths when you die.
         hero script AP_DeathLink_OnDeath
         {
             int cur_amnesty = 0;
@@ -25,7 +140,10 @@ namespace Archipelago
                 else
                 {
                     cur_amnesty = 0;
-                    death(death_reason);
+                    unless(death_reason[0])
+                        sprintf(death_reason,"%s died",slot);
+                    death_send(death_reason);
+                    death_reason[0] = 0;
                 }
             }
         }
@@ -39,40 +157,54 @@ namespace Archipelago
                 loop()
                 {
                     WaitEvent();
-                    char32 namebuf[0];
+                    char32 enemybuf[0];
                     switch(Game->EventData[GENEV_HEROHIT_HITTYPE])
                     {
                         case OBJTYPE_NPC:
                             npc obj = Game->EventData[GENEV_HEROHIT_HITOBJ];
                             npcdata nd = Game->LoadNPCData(obj->ID);
-                            nd->GetName(namebuf);
-                            sprintf(death_reason, "Killed by '%s'", namebuf);
+                            nd->GetName(enemybuf);
+                            sprintf(death_reason, "%s was killed by '%s'", slot, enemybuf);
                             break;
                         case OBJTYPE_LWPN:
                             lweapon obj = Game->EventData[GENEV_HEROHIT_HITOBJ];
-                            sprintf(death_reason, "Killed by their own weapon");
+                            sprintf(death_reason, "%s was killed by their own weapon", slot);
                             break;
                         case OBJTYPE_EWPN:
                             eweapon obj = Game->EventData[GENEV_HEROHIT_HITOBJ];
-                            sprintf(death_reason, "Killed by an enemy weapon");
+                            sprintf(death_reason, "%s was killed by an enemy weapon", slot);
                             break;
                         case OBJTYPE_COMBODATA:
                             combodata obj = Game->EventData[GENEV_HEROHIT_HITOBJ];
-                            sprintf(death_reason, "Killed by the environment");
+                            sprintf(death_reason, "%s was killed by the environment", slot);
                             break;
                         default:
-                            sprintf(death_reason,"");
+                            sprintf(death_reason,"%s died", slot);
                             break;
                     }
                 }
             }
         }
 
-        void death(char32 reason)
+        void death_send(char32 reason)
         {
             unless(do_deathlink)
                 return;
-            //!TODO Send DeathLink [death_alias,reason]
+            char32 msg[0];
+            long seconds = (GetSystemTime(RTC_SECOND)*1L)
+                + (GetSystemTime(RTC_MINUTE)*60L)
+                + (GetSystemTime(RTC_HOUR)*3600L);
+            sprintf(msg, "[{\"cmd\":\"Bounce\",\"tags\":[\"DeathLink\"],\"data\":{\"time\":%l,\"source\":\"%s\",\"cause\":\"%s\"}}]",
+                seconds, death_alias, reason);
+            sock->Send(msg);
+        }
+
+        void death_recv(char32 source, char32 cause)
+        {
+            if(cause[0])
+                printf("[DEATHLINK] Perished due to: %s\n", cause);
+            else printf("[DEATHLINK] Perished due to: %s died\n", source);
+            Hero->Kill(true);
         }
     }
 
@@ -81,25 +213,49 @@ namespace Archipelago
     char32 slot[1];
     char32 pwd[1];
     char32 death_alias[1];
-    char32 ap_game[1];
     long ap_uid;
 
     bool did_setup = false;
 
     websocket sock;
 
-    char32 info_room[0];
     bool do_deathlink = false;
     int deathlink_amnesty = 0;
     int player_id, player_team;
     bool collected_locations[0];
-    int collected_item_queue[0];
+    bool collected_items[0];
+
+    bool checked_location(int id)
+    {
+        return id < SizeOfArray(collected_locations) && collected_locations[id];
+    }
+
+    bool collected_item(int id)
+    {
+        return id < SizeOfArray(collected_items) && collected_items[id];
+    }
+
+    void mark_location_checked(int id)
+    {
+        if(id >= SizeOfArray(collected_locations))
+            ResizeArray(collected_locations, id+1);
+        collected_locations[id] = true;
+    }
+    void mark_item_collected(int id)
+    {
+        if(id >= SizeOfArray(collected_items))
+            ResizeArray(collected_items, id+1);
+        collected_items[id] = true;
+    }
 
     void connect_socket()
     {
         clear_requests();
         bool ssl = true;
         char32 buf[0];
+        if(pwd[0])
+            printf("[CONNECT] %s:%s (as %s, pwd '%s')\n", ip, port, slot, pwd);
+        else printf("[CONNECT] %s:%s (as %s)\n", ip, port, slot);
         while(true)
         {
             sprintf(buf, "%s://%s:%s", ssl ? "wss" : "ws", ip, port);
@@ -139,17 +295,14 @@ namespace Archipelago
             }
             break;
         }
-        if(AP_LOG)
-            printf("Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
     }
 
     void disconnect_socket()
     {
         sock->Free();
         sock = NULL;
-        ResizeArray(info_room, 0);
         ResizeArray(collected_locations, 0);
-        ResizeArray(collected_item_queue, 0);
+        ResizeArray(collected_items, 0);
     }
     
     bool retry()
@@ -178,7 +331,7 @@ namespace Archipelago
         return true;
     }
 
-    bool valid()
+    bool socket_valid()
     {
         return sock && sock->State == WEBSOCKET_STATE_OPEN;
     }
@@ -239,15 +392,17 @@ namespace Archipelago
                                         {
                                             case "RoomInfo":
                                             {
-                                                ref->get(info_room);
+                                                char32 gamebuf[1];
+                                                Settings::ap_get_game(gamebuf);
                                                 resp->add_key_str("cmd","Connect");
-                                                resp->add_key_str("game", ap_game);
+                                                resp->add_key_str("game", gamebuf);
                                                 resp->add_key_str("name", slot);
                                                 resp->add_key_str("password", pwd);
                                                 resp->add_key_long("uuid", ap_uid);
                                                 resp->add_key("tags", "[]");
                                                 resp->add_key("version", "{}");
                                                 resp->add_key_long("items_handling", Settings::items_handling());
+                                                resp->add_key_bool("slot_data", true);
                                                 resp->find({{0},{"tags"}});
                                                 Settings::add_tags(resp);
                                                 resp->find({{0},{"version"}});
@@ -256,12 +411,14 @@ namespace Archipelago
                                                 resp->add_key_int("minor",4);
                                                 resp->add_key_int("build",4);
                                                 resp->add_key_str("class","Version");
+                                                
+                                                Settings::on_room_info(ref);
                                                 break;
                                             }
                                             case "Connected":
                                             {
                                                 ResizeArray(collected_locations, 0);
-                                                ResizeArray(collected_item_queue, 0);
+                                                ResizeArray(collected_items, 0);
 
                                                 ref2->from(ref);
                                                 ref2->sub_find({NULL,{"slot"}});
@@ -305,45 +462,70 @@ namespace Archipelago
                                                 ref2->from(ref);
                                                 if(ref2->sub_find({NULL,{"slot_data","deathlink_amnesty"}}))
                                                     deathlink_amnesty = ref2->get_int();
+                                                else if(ref2->sub_find({NULL,{"slot_data","DeathLinkAmnesty"}}))
+                                                    deathlink_amnesty = ref2->get_int();
                                                 else deathlink_amnesty = 0;
                                                 
+                                                if(AP_LOG)
+                                                    printf("Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
                                                 if(AP_DEV_LOG)
                                                     printf("[DEV] player_id = %d, player_team = %d, deathlink = %s, amnesty = %d\n", player_id, player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
+                                                
+                                                Settings::on_connected(ref);
+
+                                                if(do_deathlink)
+                                                {
+                                                    resp->add_key_str("cmd","ConnectUpdate");
+                                                    resp->add_key("tags", "[]");
+                                                    resp->find({{0},{"tags"}});
+                                                    resp->add_indx_str("DeathLink");
+                                                    Settings::add_tags(resp);
+
+                                                    if(Game->GetHeroScript("AP_DeathLink_OnDeath") != 3)
+                                                        printf("Script 'AP_DeathLink_OnDeath' needs to be assigned to the 'onDeath' slot for 'DeathLink' to work!\n");
+                                                    int genscr = Game->GetGenericScript("AP_DeathLink_OnDamage");
+                                                    if(genscr > 0)
+                                                        RunGenericScript(genscr);
+                                                }
                                                 break;
                                             }
                                             case "PrintJSON":
                                             {
-                                                if(ref->sub_find({NULL,{"data"}}))
+                                                if(Settings::on_print_json(ref))
                                                 {
-                                                    char32 buf[1];
-                                                    char32 buf2[1];
-                                                    if(ref->first_indx())
-                                                        do
-                                                        {
-                                                            ref2->from(ref);
-                                                            if(ref2->sub_find({NULL,{"text"}}))
-                                                            {
-                                                                if(buf[0])
-                                                                {
-                                                                    ref2->get_trim(buf2);
-                                                                    sprintf(buf, "%s %s", buf, buf2);
-                                                                }
-                                                                else ref2->get_trim(buf);
-                                                            }
-                                                        } while(ref->next_indx());
-                                                    if(SizeOfArray(buf) > 30 && buf[-7] == '/'
-                                                        && buf[-6] == 'h' && buf[-5] == 'e'
-                                                        && buf[-4] == 'l' && buf[-3] == 'p')
+                                                    if(ref->find({{q},{"data"}}))
                                                     {
-                                                        if(AP_LOG_COMMUNICATION)
-                                                            printf("[BLOCKED] Useless help message\n");
-                                                        break; //skip help message, doesn't apply
+                                                        char32 buf[1];
+                                                        char32 buf2[1];
+                                                        if(ref->first_indx())
+                                                            do
+                                                            {
+                                                                ref2->from(ref);
+                                                                if(ref2->sub_find({NULL,{"text"}}))
+                                                                {
+                                                                    if(buf[0])
+                                                                    {
+                                                                        ref2->get_trim(buf2);
+                                                                        sprintf(buf, "%s %s", buf, buf2);
+                                                                    }
+                                                                    else ref2->get_trim(buf);
+                                                                }
+                                                            } while(ref->next_indx());
+                                                        if(SizeOfArray(buf) > 30 && buf[-7] == '/'
+                                                            && buf[-6] == 'h' && buf[-5] == 'e'
+                                                            && buf[-4] == 'l' && buf[-3] == 'p')
+                                                        {
+                                                            if(AP_LOG_COMMUNICATION)
+                                                                printf("[BLOCKED] Useless help message\n");
+                                                            break; //skip help message, doesn't apply
+                                                        }
+                                                        printf("[AP] %s\n", buf);
                                                     }
-                                                    printf("[AP] %s\n", buf);
                                                 }
                                                 break;
                                             }
                                             case "ConnectionRefused":
+                                            {
                                                 if(ref->sub_find({NULL,{"errors"}}))
                                                 {
                                                     if(ref->first_indx())
@@ -367,6 +549,112 @@ namespace Archipelago
                                                         }
                                                     }
                                                 }
+                                                break;
+                                            }
+                                            case "ReceivedItems":
+                                            {
+                                                if(ref->sub_find({NULL,"items"}))
+                                                {
+                                                    NetworkItem items[0];
+                                                    if(ref->first_indx())
+                                                    {
+                                                        do
+                                                        {
+                                                            NetworkItem itm = new NetworkItem(ref);
+                                                            if(itm->valid)
+                                                            {
+                                                                mark_item_collected(itm->item_id);
+                                                                if(itm->player_id == player_id)
+                                                                {
+                                                                    mark_location_checked(itm->location_id);
+                                                                    Settings::do_remove_location(itm->location_id);
+                                                                }
+                                                                ArrayPushBack(items, itm);
+                                                            }
+                                                            else delete itm;
+                                                        } while(ref->next_indx());
+                                                        Settings::on_item_received(items);
+                                                        for(item : items)
+                                                            delete item;
+                                                    }
+                                                }
+                                                break;
+                                            }
+                                            case "LocationInfo":
+                                            {
+                                                if(ref->sub_find({NULL,"locations"}))
+                                                {
+                                                    NetworkItem items[0];
+                                                    if(ref->first_indx())
+                                                    {
+                                                        do
+                                                        {
+                                                            NetworkItem itm = new NetworkItem(ref);
+                                                            if(itm->valid)
+                                                                ArrayPushBack(items, itm);
+                                                            else delete itm;
+                                                        } while(ref->next_indx());
+                                                        Settings::on_location_scouts(items);
+                                                        for(item : items)
+                                                            delete item;
+                                                    }
+                                                }
+                                                break;
+                                            }
+                                            case "RoomUpdate":
+                                            {
+                                                Settings::on_room_update(ref);
+                                                if(ref->find({{q},{"checked_locations"}}))
+                                                    if(ref->first_indx())
+                                                        do
+                                                        {
+                                                            int id = ref->get_int();
+                                                            mark_location_checked(id);
+                                                            Settings::do_remove_location(id);
+                                                        } while(ref->next_indx());
+                                                break;
+                                            }
+                                            case "Bounced":
+                                            {
+                                                Settings::on_bounced(ref);
+                                                if(ref->find({{q},{"tags"}}))
+                                                {
+                                                    if(ref->first_indx())
+                                                        do
+                                                        {
+                                                            char32 buf[1];
+                                                            ref->get_trim(buf);
+                                                            unless(strcmp(buf,"DeathLink"))
+                                                            {
+                                                                char32 sbuf[1];
+                                                                char32 cbuf[1];
+                                                                if(ref->find({{q},{"data","source"}}))
+                                                                    ref->get_trim(sbuf);
+                                                                if(ref->find({{q},{"data","cause"}}))
+                                                                    ref->get_trim(cbuf);
+                                                                DeathLink::death_recv(sbuf,cbuf);
+                                                                break;
+                                                            }
+                                                        } while(ref->next_indx());
+                                                }
+                                                break;
+                                            }
+                                            case "Retrieved":
+                                            {
+                                                Settings::on_retrieved(ref);
+                                                break;
+                                            }
+                                            case "SetReply":
+                                            {
+                                                Settings::on_set_reply(ref);
+                                                break;
+                                            }
+                                            case "InvalidPacket":
+                                                printf("[ERR]: %s\n", msg);
+                                                break;
+                                            case "DataPackage":
+                                                printf("[DATAPACK]: %s\n", msg);
+                                                //!TODO Do something with these?? idk
                                                 break;
                                             default:
                                                 printf("[???]: %s\n", msg);
@@ -405,8 +693,6 @@ namespace Archipelago
 
     void ap_setup()
     {
-        ap_game[0] = 0;
-        Settings::ap_get_game(ap_game);
         unless(did_setup)
             ap_uid = RandGen->LRand();
         did_setup = true;
@@ -414,7 +700,6 @@ namespace Archipelago
 
     void ap_connect(char32 _ip, char32 _port, char32 _slot, char32 _pwd, char32 _death_alias = NULL)
     {
-        printf("Connecting with '%s', '%s', '%s', '%s'\n", _ip, _port, _slot, _pwd);
         disconnect_socket();
         sprintf(ip,"%s",_ip[0] ? _ip : "archipelago.gg");
         sprintf(port,"%s",_port[0] ? _port : "38281");
@@ -424,5 +709,52 @@ namespace Archipelago
         _do_connect();
         if(int scr = CheckGenericScript("APHandler"))
             RunGenericScript(scr);
+    }
+
+    void send_sync()
+    {
+        unless(socket_valid()) return;
+        sock->Send("[{\"cmd\":\"Sync\"}]");
+    }
+
+    void send_location_checks(...int[] locations)
+    {
+        unless(socket_valid()) return;
+        char32 msg[] = "[{\"cmd\":\"LocationChecks\",\"locations\":[]}]";
+        JSONRef ref = new JSONRef(msg);
+        ref->find({{0},{"locations"}});
+        for(loc : locations)
+            ref->add_indx_int(loc);
+        sock->Send(msg);
+        delete ref;
+    }
+
+    void send_location_scouts(int hint_mode, ...int[] locations)
+    {
+        unless(socket_valid()) return;
+        char32 msg[0];
+        sprintf(msg, "[{\"cmd\":\"LocationScouts\",\"locations\":[],\"create_as_hint\":%d}]",hint_mode);
+        JSONRef ref = new JSONRef(msg);
+        ref->find({{0},{"locations"}});
+        for(loc : locations)
+            ref->add_indx_int(loc);
+        sock->Send(msg);
+        delete ref;
+    }
+
+    void send_status_update(ClientStatus status)
+    {
+        unless(socket_valid()) return;
+        char32 msg[0];
+        sprintf(msg, "[{\"cmd\":\"StatusUpdate\",\"status\":%d}]",status);
+        sock->Send(msg);
+    }
+
+    void send_say(char32 msg)
+    {
+        unless(socket_valid()) return;
+        char32 msg[0];
+        sprintf(msg, "[{\"cmd\":\"Say\",\"text\":%s}]",msg);
+        sock->Send(msg);
     }
 }

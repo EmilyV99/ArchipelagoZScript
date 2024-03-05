@@ -60,6 +60,12 @@ namespace JSON
             get(buf);
             return atoi(buf);
         }
+        long get_long()
+        {
+            char32 buf[0];
+            get(buf);
+            return atol(buf);
+        }
         bool get_bool()
         {
             char32 buf[0];
@@ -145,6 +151,10 @@ namespace JSON
             else sprintf(strptr, "%s,\"%s\":\"%s\"%s", strptr, key, str, postbuf);
             end += SizeOfArray(strptr)-sz;
             return true;
+        }
+        bool add_key_bool(char32 key, bool b)
+        {
+            return add_key(key, b ? "true" : "false");
         }
         bool add_key_int(char32 key, untyped val)
         {
@@ -247,6 +257,10 @@ namespace JSON
             else sprintf(strptr, "%s,\"%s\"%s", strptr, str, postbuf);
             end += SizeOfArray(strptr)-sz;
             return true;
+        }
+        bool add_indx_bool(bool b)
+        {
+            return add_indx(b ? "true" : "false");
         }
         bool add_indx_int(untyped val)
         {
