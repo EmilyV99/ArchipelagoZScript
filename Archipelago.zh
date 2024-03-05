@@ -1,0 +1,428 @@
+#include "json.zh"
+namespace Archipelago
+{
+    namespace Settings
+    {
+        void ap_get_game(char32 buf); //Return your game name
+        long items_handling() : default 101Lb; //return your item handling mode
+        void add_tags(JSONRef ref);
+    }
+    using namespace JSON;
+    CONFIGB AP_LOG = true;
+    CONFIG AP_LOG_COMMUNICATION = 1; // 0 = none, 1 = some, 2 = full
+    CONFIGB AP_DEV_LOG = true;
+    namespace DeathLink
+    {
+        char32 death_reason[0];
+        //Optional script; sends deathlink deaths when you die
+        hero script AP_DeathLink_OnDeath
+        {
+            int cur_amnesty = 0;
+            void run()
+            {
+                if(cur_amnesty < deathlink_amnesty)
+                    ++cur_amnesty;
+                else
+                {
+                    cur_amnesty = 0;
+                    death(death_reason);
+                }
+            }
+        }
+        //Optional script; sets the 'death reason' for DeathLink
+        generic script AP_DeathLink_OnDamage
+        {
+            void run()
+            {
+                loop(q : 0=..GENSCR_NUMEVENT)
+                    this->EventListen[q] = q==GENSCR_EVENT_HERO_HIT_2;
+                loop()
+                {
+                    WaitEvent();
+                    char32 namebuf[0];
+                    switch(Game->EventData[GENEV_HEROHIT_HITTYPE])
+                    {
+                        case OBJTYPE_NPC:
+                            npc obj = Game->EventData[GENEV_HEROHIT_HITOBJ];
+                            npcdata nd = Game->LoadNPCData(obj->ID);
+                            nd->GetName(namebuf);
+                            sprintf(death_reason, "Killed by '%s'", namebuf);
+                            break;
+                        case OBJTYPE_LWPN:
+                            lweapon obj = Game->EventData[GENEV_HEROHIT_HITOBJ];
+                            sprintf(death_reason, "Killed by their own weapon");
+                            break;
+                        case OBJTYPE_EWPN:
+                            eweapon obj = Game->EventData[GENEV_HEROHIT_HITOBJ];
+                            sprintf(death_reason, "Killed by an enemy weapon");
+                            break;
+                        case OBJTYPE_COMBODATA:
+                            combodata obj = Game->EventData[GENEV_HEROHIT_HITOBJ];
+                            sprintf(death_reason, "Killed by the environment");
+                            break;
+                        default:
+                            sprintf(death_reason,"");
+                            break;
+                    }
+                }
+            }
+        }
+
+        void death(char32 reason)
+        {
+            unless(do_deathlink)
+                return;
+            //!TODO Send DeathLink [death_alias,reason]
+        }
+    }
+
+    char32 ip[1];
+    char32 port[1];
+    char32 slot[1];
+    char32 pwd[1];
+    char32 death_alias[1];
+    char32 ap_game[1];
+    long ap_uid;
+
+    bool did_setup = false;
+
+    websocket sock;
+
+    char32 info_room[0];
+    bool do_deathlink = false;
+    int deathlink_amnesty = 0;
+    int player_id, player_team;
+    bool collected_locations[0];
+    int collected_item_queue[0];
+
+    void connect_socket()
+    {
+        clear_requests();
+        bool ssl = true;
+        char32 buf[0];
+        while(true)
+        {
+            sprintf(buf, "%s://%s:%s", ssl ? "wss" : "ws", ip, port);
+            if(sock)
+            {
+                sock->Free();
+                Waitframe();
+            }
+            sock = Game->LoadWebSocket(buf);
+            while(sock->State == WEBSOCKET_STATE_CONNECTING)
+                Waitframe();
+            if(sock->State == WEBSOCKET_STATE_CLOSED)
+            {
+                char32 error[0];
+                sock->GetError(error);
+                switch(error)
+                {
+                    case "endpoint not secure":
+                        break;
+                    default:
+                        printf("Failed to connect: '%s'\n", error);
+                }
+                ssl = !ssl;
+                continue;
+            }
+            if(sock->State != WEBSOCKET_STATE_OPEN)
+            {
+                printf("Failed to connect: '%d'\n", sock->State);
+                ssl = !ssl;
+                continue;
+            }
+            if(!sock)
+            {
+                printf("Fucked up error!\n");
+                ssl = !ssl;
+                continue;
+            }
+            break;
+        }
+        if(AP_LOG)
+            printf("Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
+    }
+
+    void disconnect_socket()
+    {
+        sock->Free();
+        sock = NULL;
+        ResizeArray(info_room, 0);
+        ResizeArray(collected_locations, 0);
+        ResizeArray(collected_item_queue, 0);
+    }
+    
+    bool retry()
+    {
+        if(sock)
+        {
+            _do_connect();
+            return true;
+        }
+        return false;
+    }
+
+    void clear_requests()
+    {
+        //!TODO
+    }
+
+    bool update_socket()
+    {
+        if(!sock || sock->State == WEBSOCKET_STATE_CLOSED)
+        {
+            if(AP_LOG)
+                printf("Disconnected from Archipelago");
+            return retry();
+        }
+        return true;
+    }
+
+    bool valid()
+    {
+        return sock && sock->State == WEBSOCKET_STATE_OPEN;
+    }
+
+    generic script APConnect
+    {
+        void run()
+        {
+            connect_socket();
+        }
+    }
+
+    generic script APHandler
+    {
+        void run()
+        {
+            #option STRING_SWITCH_CASE_INSENSITIVE on
+            ap_setup();
+            loop()
+            {
+                until(sock)
+                    Waitframe();
+                while(sock && update_socket())
+                {
+                    while(sock->HasMessage)
+                    {
+                        char32 msg = sock->Receive();
+                        switch(sock->MessageType)
+                        {
+                            case WEBSOCKET_MESSAGE_TYPE_TEXT:
+                            {
+                                if(AP_LOG_COMMUNICATION > 1)
+                                    printf("[RECV]: %s\n", msg);
+                                JSONRef ref = new JSONRef(msg);
+                                JSONRef ref2 = new JSONRef(msg);
+                                ref->find({{-1}});
+
+                                JSONRef resp = new JSONRef();
+
+                                char32 buf[1];
+
+                                int q = 0;
+                                if(ref->first_indx())
+                                    do
+                                    {
+                                        if(ref->find({{q},{"cmd"}}))
+                                            ref->get_trim(buf);
+                                        else continue;
+                                        ref->find({{q}});
+
+                                        char32 response[] = "[{}]";
+                                        resp->strptr = response;
+                                        resp->find({{0},{""}});
+                                        
+                                        if(AP_LOG_COMMUNICATION)
+                                            printf("[COMMAND] %s\n", buf);
+                                        switch(buf)
+                                        {
+                                            case "RoomInfo":
+                                            {
+                                                ref->get(info_room);
+                                                resp->add_key_str("cmd","Connect");
+                                                resp->add_key_str("game", ap_game);
+                                                resp->add_key_str("name", slot);
+                                                resp->add_key_str("password", pwd);
+                                                resp->add_key_long("uuid", ap_uid);
+                                                resp->add_key("tags", "[]");
+                                                resp->add_key("version", "{}");
+                                                resp->add_key_long("items_handling", Settings::items_handling());
+                                                resp->find({{0},{"tags"}});
+                                                Settings::add_tags(resp);
+                                                resp->find({{0},{"version"}});
+                                                // AP 0.4.4
+                                                resp->add_key_int("major",0);
+                                                resp->add_key_int("minor",4);
+                                                resp->add_key_int("build",4);
+                                                resp->add_key_str("class","Version");
+                                                break;
+                                            }
+                                            case "Connected":
+                                            {
+                                                ResizeArray(collected_locations, 0);
+                                                ResizeArray(collected_item_queue, 0);
+
+                                                ref2->from(ref);
+                                                ref2->sub_find({NULL,{"slot"}});
+                                                player_id = ref2->get_int();
+                                                ref2->from(ref);
+                                                ref2->sub_find({NULL,{"team"}});
+                                                player_team = ref2->get_int();
+
+                                                ref2->from(ref);
+                                                ref2->sub_find({NULL,{"missing_locations"}});
+                                                if(ref2->first_indx())
+                                                    do
+                                                    {
+                                                        int locid = ref2->get_int();
+                                                        if(locid >= SizeOfArray(collected_locations))
+                                                            ResizeArray(collected_locations, locid+1);
+                                                    }
+                                                    while(ref2->next_indx());
+
+                                                ref2->from(ref);
+                                                ref2->sub_find({NULL,{"checked_locations"}});
+                                                if(ref2->first_indx())
+                                                    do
+                                                    {
+                                                        int locid = ref2->get_int();
+                                                        if(locid >= SizeOfArray(collected_locations))
+                                                            ResizeArray(collected_locations, locid+1);
+                                                        collected_locations[locid] = true;
+                                                    }
+                                                    while(ref2->next_indx());
+
+                                                do_deathlink = false;
+                                                ref2->from(ref);
+                                                if(ref2->sub_find({NULL,{"slot_data","death_link"}}))
+                                                    if(ref2->get_bool())
+                                                        do_deathlink = true;
+                                                ref2->from(ref);
+                                                if(ref2->sub_find({NULL,{"slot_data","DeathLink"}}))
+                                                    if(ref2->get_bool())
+                                                        do_deathlink = true;
+                                                ref2->from(ref);
+                                                if(ref2->sub_find({NULL,{"slot_data","deathlink_amnesty"}}))
+                                                    deathlink_amnesty = ref2->get_int();
+                                                else deathlink_amnesty = 0;
+                                                
+                                                if(AP_DEV_LOG)
+                                                    printf("[DEV] player_id = %d, player_team = %d, deathlink = %s, amnesty = %d\n", player_id, player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
+                                                break;
+                                            }
+                                            case "PrintJSON":
+                                            {
+                                                if(ref->sub_find({NULL,{"data"}}))
+                                                {
+                                                    char32 buf[1];
+                                                    char32 buf2[1];
+                                                    if(ref->first_indx())
+                                                        do
+                                                        {
+                                                            ref2->from(ref);
+                                                            if(ref2->sub_find({NULL,{"text"}}))
+                                                            {
+                                                                if(buf[0])
+                                                                {
+                                                                    ref2->get_trim(buf2);
+                                                                    sprintf(buf, "%s %s", buf, buf2);
+                                                                }
+                                                                else ref2->get_trim(buf);
+                                                            }
+                                                        } while(ref->next_indx());
+                                                    if(SizeOfArray(buf) > 30 && buf[-7] == '/'
+                                                        && buf[-6] == 'h' && buf[-5] == 'e'
+                                                        && buf[-4] == 'l' && buf[-3] == 'p')
+                                                    {
+                                                        if(AP_LOG_COMMUNICATION)
+                                                            printf("[BLOCKED] Useless help message\n");
+                                                        break; //skip help message, doesn't apply
+                                                    }
+                                                    printf("[AP] %s\n", buf);
+                                                }
+                                                break;
+                                            }
+                                            case "ConnectionRefused":
+                                                if(ref->sub_find({NULL,{"errors"}}))
+                                                {
+                                                    if(ref->first_indx())
+                                                    {
+                                                        char32 buf[0];
+                                                        ref->get_trim(buf);
+                                                        switch(buf)
+                                                        {
+                                                            case "InvalidSlot":
+                                                                printf("[AP] Connection Error: The slot '%s' was not found!\n", slot);
+                                                                break;
+                                                            case "InvalidPassword":
+                                                                printf("[AP] Connection Error: The password was incorrect!\n");
+                                                                break;
+                                                            //case "InvalidGame":
+                                                            //case "IncompatibleVersion":
+                                                            //case "InvalidItemsHandling":
+                                                            default:
+                                                                printf("[AP] Connection Error: %s\n", buf);
+                                                                break;
+                                                        }
+                                                    }
+                                                }
+                                                break;
+                                            default:
+                                                printf("[???]: %s\n", msg);
+                                                break;
+                                        }
+                                        if(strlen(response) > 4)
+                                        {
+                                            if(AP_LOG_COMMUNICATION > 1)
+                                                printf("[SEND] %s\n", response);
+                                            sock->Send(response);
+                                        }
+                                    } while(++q && ref->next_indx());
+
+                                delete ref;
+                                delete ref2;
+                                delete resp;
+                                break;
+                            }
+                            default:
+                                printf("[RECV UNKNOWN]: '%ad'\n", msg);
+                                break;
+                        }
+                    }
+                    Waitframe();
+                }
+            }
+        }
+    }
+
+    void _do_connect()
+    {
+        if(int scr = CheckGenericScript("APConnect"))
+            RunGenericScriptFrz(scr);
+        else connect_socket();
+    }
+
+    void ap_setup()
+    {
+        ap_game[0] = 0;
+        Settings::ap_get_game(ap_game);
+        unless(did_setup)
+            ap_uid = RandGen->LRand();
+        did_setup = true;
+    }
+
+    void ap_connect(char32 _ip, char32 _port, char32 _slot, char32 _pwd, char32 _death_alias = NULL)
+    {
+        printf("Connecting with '%s', '%s', '%s', '%s'\n", _ip, _port, _slot, _pwd);
+        disconnect_socket();
+        sprintf(ip,"%s",_ip[0] ? _ip : "archipelago.gg");
+        sprintf(port,"%s",_port[0] ? _port : "38281");
+        sprintf(slot,"%s",_slot);
+        sprintf(pwd,"%s",_pwd);
+        sprintf(death_alias,"%s",_death_alias ? _death_alias : slot);
+        _do_connect();
+        if(int scr = CheckGenericScript("APHandler"))
+            RunGenericScript(scr);
+    }
+}

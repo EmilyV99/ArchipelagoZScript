@@ -1,0 +1,728 @@
+namespace JSON
+{
+    enum Type
+    {
+        JS_None,
+        JS_String,
+        JS_Array,
+        JS_Object,
+        JS_Value,
+        JS_NumTypes
+    };
+    class JSONRef
+    {
+        char32 strptr;
+        int start;
+        int end;
+        Type type;
+        Type listtype;
+
+        JSONRef();
+        JSONRef(char32 str) {strptr = str;}
+        JSONRef(JSONRef other)
+        {
+            from(other);
+        }
+        void from(JSONRef other)
+        {
+            strptr = other->strptr;
+            start = other->start;
+            end = other->end;
+            listtype = other->listtype;
+            type = other->type;
+        }
+        void get(char32 buf)
+        {
+            if(end <= start || !IsValidArray(strptr))
+            {
+                ResizeArray(buf, 1);
+                buf[-1] = 0;
+                return;
+            }
+            ResizeArray(buf, end-start+1);
+            loop(q : 0=..(end-start))
+                buf[q] = strptr[q+start];
+            buf[-1] = 0;
+        }
+        void get_trim(char32 buf)
+        {
+            get(buf);
+            if(buf[0] == '"' && buf[-2] == '"')
+            {
+                ArrayPopBack(buf);
+                ArrayPopFront(buf);
+                buf[-1] = 0;
+            }
+        }
+        int get_int()
+        {
+            char32 buf[0];
+            get(buf);
+            return atoi(buf);
+        }
+        bool get_bool()
+        {
+            char32 buf[0];
+            get(buf);
+            return !stricmp(buf,"true");
+        }
+        void set(char32 buf)
+        {
+            if(end <= start || !IsValidArray(strptr))
+                return;
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, start+1);
+            strptr[-1] = 0;
+            sprintf(strptr, "%s%s%s", strptr, buf, postbuf);
+        }
+        void set_str(char32 buf)
+        {
+            if(end <= start || !IsValidArray(strptr))
+                return;
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, start+1);
+            strptr[-1] = 0;
+            sprintf(strptr, "%s\"%s\"%s", strptr, buf, postbuf);
+        }
+        bool valid()
+        {
+            return end > start && IsValidArray(strptr);
+        }
+        bool add_key(char32 key, char32 val = NULL)
+        {
+            if(strptr[end] != '}')
+            {
+                if(strptr[start] == '{' && strptr[end-1] == '}')
+                {
+                    ++start;
+                    --end;
+                }
+                else return false;
+            }
+            int _s = start, _e = end;
+            bool b = sub_find({NULL,{key}});
+            start = _s; end = _e;
+            if(b)
+                return false;
+            int sz = SizeOfArray(strptr);
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, end+1);
+            strptr[-1] = 0;
+            
+            if(start == end)
+                sprintf(strptr, "%s\"%s\":%s%s", strptr, key, val ? val : "\"\"", postbuf);
+            else sprintf(strptr, "%s,\"%s\":%s%s", strptr, key, val ? val : "\"\"", postbuf);
+            end += SizeOfArray(strptr)-sz;
+            return true;
+        }
+        bool add_key_str(char32 key, char32 str)
+        {
+            if(strptr[end] != '}')
+            {
+                if(strptr[start] == '{' && strptr[end-1] == '}')
+                {
+                    ++start;
+                    --end;
+                }
+                else return false;
+            }
+            int _s = start, _e = end;
+            bool b = sub_find({NULL,{key}});
+            start = _s; end = _e;
+            if(b)
+                return false;
+            int sz = SizeOfArray(strptr);
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, end+1);
+            strptr[-1] = 0;
+           
+            if(start == end)
+                sprintf(strptr, "%s\"%s\":\"%s\"%s", strptr, key, str, postbuf);
+            else sprintf(strptr, "%s,\"%s\":\"%s\"%s", strptr, key, str, postbuf);
+            end += SizeOfArray(strptr)-sz;
+            return true;
+        }
+        bool add_key_int(char32 key, untyped val)
+        {
+            if(strptr[end] != '}')
+            {
+                if(strptr[start] == '{' && strptr[end-1] == '}')
+                {
+                    ++start;
+                    --end;
+                }
+                else return false;
+            }
+            int _s = start, _e = end;
+            bool b = sub_find({NULL,{key}});
+            start = _s; end = _e;
+            if(b)
+                return false;
+            int sz = SizeOfArray(strptr);
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, end+1);
+            strptr[-1] = 0;
+            
+            if(start == end)
+                sprintf(strptr, "%s\"%s\":%d%s", strptr, key, val, postbuf);
+            else sprintf(strptr, "%s,\"%s\":%d%s", strptr, key, val, postbuf);
+            end += SizeOfArray(strptr)-sz;
+            return true;
+        }
+        bool add_key_long(char32 key, untyped val)
+        {
+            if(strptr[end] != '}')
+            {
+                if(strptr[start] == '{' && strptr[end-1] == '}')
+                {
+                    ++start;
+                    --end;
+                }
+                else return false;
+            }
+            int _s = start, _e = end;
+            bool b = sub_find({NULL,{key}});
+            start = _s; end = _e;
+            if(b)
+                return false;
+            int sz = SizeOfArray(strptr);
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, end+1);
+            strptr[-1] = 0;
+            
+            if(start == end)
+                sprintf(strptr, "%s\"%s\":%l%s", strptr, key, val, postbuf);
+            else sprintf(strptr, "%s,\"%s\":%l%s", strptr, key, val, postbuf);
+            end += SizeOfArray(strptr)-sz;
+            return true;
+        }
+        bool add_indx(char32 val = NULL)
+        {
+            if(strptr[end] != ']')
+            {
+                if(strptr[start] == '[' && strptr[end-1] == ']')
+                {
+                    ++start;
+                    --end;
+                }
+                else return false;
+            }
+            int sz = SizeOfArray(strptr);
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, end+1);
+            strptr[-1] = 0;
+            
+            if(start == end)
+                sprintf(strptr, "%s%s%s", strptr, val ? val : "\"\"", postbuf);
+            else sprintf(strptr, "%s,%s%s", strptr, val ? val : "\"\"", postbuf);
+            end += SizeOfArray(strptr)-sz;
+            return true;
+        }
+        bool add_indx_str(char32 str)
+        {
+            if(strptr[end] != ']')
+            {
+                if(strptr[start] == '[' && strptr[end-1] == ']')
+                {
+                    ++start;
+                    --end;
+                }
+                else return false;
+            }
+            int sz = SizeOfArray(strptr);
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, end+1);
+            strptr[-1] = 0;
+            
+            if(start == end)
+                sprintf(strptr, "%s\"%s\"%s", strptr, str, postbuf);
+            else sprintf(strptr, "%s,\"%s\"%s", strptr, str, postbuf);
+            end += SizeOfArray(strptr)-sz;
+            return true;
+        }
+        bool add_indx_int(untyped val)
+        {
+            if(strptr[end] != ']')
+            {
+                if(strptr[start] == '[' && strptr[end-1] == ']')
+                {
+                    ++start;
+                    --end;
+                }
+                else return false;
+            }
+            int sz = SizeOfArray(strptr);
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, end+1);
+            strptr[-1] = 0;
+            
+            if(start == end)
+                sprintf(strptr, "%s%d%s", strptr, val, postbuf);
+            else sprintf(strptr, "%s,%d%s", strptr, val, postbuf);
+            end += SizeOfArray(strptr)-sz;
+            return true;
+        }
+        bool add_indx_long(untyped val)
+        {
+            if(strptr[end] != ']')
+            {
+                if(strptr[start] == '[' && strptr[end-1] == ']')
+                {
+                    ++start;
+                    --end;
+                }
+                else return false;
+            }
+            int sz = SizeOfArray(strptr);
+            char32 postbuf[0];
+            scrape_postbuf(postbuf);
+            ResizeArray(strptr, end+1);
+            strptr[-1] = 0;
+            
+            if(start == end)
+                sprintf(strptr, "%s%l%s", strptr, val, postbuf);
+            else sprintf(strptr, "%s,%l%s", strptr, val, postbuf);
+            end += SizeOfArray(strptr)-sz;
+            return true;
+        }
+        int count_indx()
+        {
+            if(strptr[end] != ']')
+            {
+                if(strptr[start] == '[' && strptr[end-1] == ']')
+                {
+                    ++start;
+                    --end;
+                }
+                else return 0;
+            }
+            
+            int brackets[0];
+            ArrayPushBack(brackets, '[');
+            int brack_level = SizeOfArray(brackets);
+            int _start = 0, _end = 0;
+            int indx = 0;
+            int q = 0;
+            while(SizeOfArray(brackets))
+            {
+                if(brackets[-1] == '"' && strptr[indx] != '"')
+                {
+                    ++indx;
+                    continue;
+                }
+                switch(strptr[indx])
+                {
+                    case '[':
+                    case '{':
+                        ArrayPushBack(brackets, strptr[indx]);
+                        break;
+                    case ']':
+                        if(brackets[-1] != '[')
+                            return 0;
+                        if(SizeOfArray(brackets) == brack_level)
+                            ++q;
+                        ArrayPopBack(brackets);
+                        break;
+                    case '}':
+                        if(brackets[-1] != '{')
+                            return 0;
+                        if(SizeOfArray(brackets) == brack_level)
+                            ++q;
+                        ArrayPopBack(brackets);
+                        break;
+                    case '"':
+                        if(brackets[-1] == '"')
+                            ArrayPopBack(brackets);
+                        else ArrayPushBack(brackets, '"');
+                        break;
+                    case ',':
+                        if(SizeOfArray(brackets) == brack_level)
+                            ++q;
+                        break;
+                }
+                if(++indx >= end)
+                    return 0;
+            }
+            return q;
+        }
+        bool find(untyped search_arr)
+        {
+            start = 0;
+            end = SizeOfArray(strptr);
+            return sub_find(search_arr);
+        }
+        bool sub_find(untyped search_arr)
+        {
+            bool index_mode = false;
+            int from = this->start, to = this->end;
+            Type ltype, ty;
+            for(arr : search_arr)
+            {
+                index_mode = !index_mode;
+                if(!arr)
+                    continue;
+                for(val : arr)
+                {
+                    int indx = from;
+                    while(is_ws(strptr[indx]))
+                        ++indx;
+                    int brackets[0];
+                    if(index_mode)
+                    {
+                        if(strptr[indx++] != '[')
+                            return false;
+                        if(val < 0)
+                        {
+                            ++from;
+                            --to;
+                            ty = JS_Array;
+                            continue;
+                        }
+                        ltype = JS_Array;
+                        ArrayPushBack(brackets, '[');
+                        int brack_level = SizeOfArray(brackets);
+                        int _start = 0, _end = 0;
+                        loop(q : 0=..=val)
+                        {
+                            _start = indx;
+                            _end = 0;
+                            until(_end)
+                            {
+                                if(brackets[-1] == '"' && strptr[indx] != '"')
+                                {
+                                    ++indx;
+                                    continue;
+                                }
+                                switch(strptr[indx])
+                                {
+                                    case '[':
+                                    case '{':
+                                        ArrayPushBack(brackets, strptr[indx]);
+                                        break;
+                                    case ']':
+                                        if(brackets[-1] != '[')
+                                            return false;
+                                        if(SizeOfArray(brackets) == brack_level)
+                                            _end = indx;
+                                        ArrayPopBack(brackets);
+                                        break;
+                                    case '}':
+                                        if(brackets[-1] != '{')
+                                            return false;
+                                        if(SizeOfArray(brackets) == brack_level)
+                                            _end = indx;
+                                        ArrayPopBack(brackets);
+                                        break;
+                                    case '"':
+                                        if(brackets[-1] == '"')
+                                            ArrayPopBack(brackets);
+                                        else ArrayPushBack(brackets, '"');
+                                        break;
+                                    case ',':
+                                        if(SizeOfArray(brackets) == brack_level)
+                                            _end = indx;
+                                        break;
+                                }
+                                if(++indx >= to)
+                                    return false;
+                            }
+                        }
+                        from = _start;
+                        to = _end;
+                    }
+                    else
+                    {
+                        if(strptr[indx++] != '{')
+                            return false;
+                        if(val[0] == 0)
+                        {
+                            ++from;
+                            --to;
+                            ty = JS_Object;
+                            continue;
+                        }
+                        ltype = JS_Object;
+                        ArrayPushBack(brackets, '{');
+                        int brack_level = SizeOfArray(brackets);
+                        int _start = 0, _end = 0;
+                        while(true)
+                        {
+                            _start = indx;
+                            _end = 0;
+                            bool key = true;
+                            bool value = false;
+                            char32 keybuf[0];
+                            until(_end)
+                            {
+                                if(brackets[-1] == '"' && strptr[indx] != '"')
+                                {
+                                    if(key)
+                                        ArrayPushBack(keybuf, strptr[indx]);
+                                    if(++indx >= to)
+                                        return false;
+                                    continue;
+                                }
+                                switch(strptr[indx])
+                                {
+                                    case '[':
+                                    case '{':
+                                        ArrayPushBack(brackets, strptr[indx]);
+                                        break;
+                                    case ']':
+                                        if(brackets[-1] != '[')
+                                            return false;
+                                        if(SizeOfArray(brackets) == brack_level)
+                                            _end = indx;
+                                        ArrayPopBack(brackets);
+                                        break;
+                                    case '}':
+                                        if(brackets[-1] != '{')
+                                            return false;
+                                        if(SizeOfArray(brackets) == brack_level)
+                                            _end = indx;
+                                        ArrayPopBack(brackets);
+                                        break;
+                                    case '"':
+                                        if(brackets[-1] == '"')
+                                        {
+                                            ArrayPopBack(brackets);
+                                            if(key)
+                                                key = false;
+                                        }
+                                        else ArrayPushBack(brackets, '"');
+                                        break;
+                                    case ':':
+                                        if(!key && !value)
+                                        {
+                                            _start = indx+1;
+                                            value = true;
+                                        }
+                                        break;
+                                    case ',':
+                                        if(SizeOfArray(brackets) == brack_level)
+                                            _end = indx;
+                                        break;
+                                }
+                                ++indx;
+                                if(indx >= to && !_end)
+                                    return false;
+                            }
+                            ArrayPushBack(keybuf, 0);
+                            unless(strcmp(keybuf,val))
+                                break;
+                            if(indx >= to)
+                                return false;
+                        }
+                        from = _start;
+                        to = _end;
+                    }
+                    if(from == to)
+                        ty = JS_None;
+                    else switch(strptr[to-1])
+                    {
+                        case ']':
+                            ty = JS_Array;
+                            break;
+                        case '}':
+                            ty = JS_Object;
+                            break;
+                        case '"':
+                            ty = JS_String;
+                            break;
+                        default:
+                            ty = JS_Value;
+                            break;
+                    }
+                }
+            }
+            this->type = ty;
+            this->listtype = ltype;
+            this->start = from;
+            this->end = to;
+            return true;
+        }
+        bool first_indx()
+        {
+            if(type != JS_Array)
+                return false;
+            if(strptr[start] == '[' && strptr[end-1] == ']')
+            {
+                ++start;
+                --end;
+            }
+            else
+            {
+                int brackets[0];
+                ArrayPushBack(brackets, '[');
+                int brack_level = SizeOfArray(brackets);
+                int _start = this->start, _end = 0;
+                int indx = _start;
+                until(_end)
+                {
+                    if(brackets[-1] == '"' && strptr[indx] != '"')
+                    {
+                        ++indx;
+                        continue;
+                    }
+                    switch(strptr[indx])
+                    {
+                        case '[':
+                        case '{':
+                            ArrayPushBack(brackets, strptr[indx]);
+                            break;
+                        case ']':
+                            if(brackets[-1] != '[')
+                                return false;
+                            if(SizeOfArray(brackets) == brack_level)
+                                _end = indx;
+                            ArrayPopBack(brackets);
+                            break;
+                        case '}':
+                            if(brackets[-1] != '{')
+                                return false;
+                            if(SizeOfArray(brackets) == brack_level)
+                                _end = indx;
+                            ArrayPopBack(brackets);
+                            break;
+                        case '"':
+                            if(brackets[-1] == '"')
+                                ArrayPopBack(brackets);
+                            else ArrayPushBack(brackets, '"');
+                            break;
+                        case ',':
+                            if(SizeOfArray(brackets) == brack_level)
+                                _end = indx;
+                            break;
+                    }
+                    if(!_end && ++indx > this->end)
+                        return false;
+                }
+                start = _start;
+                end = _end;
+            }
+            listtype = JS_Array;
+            if(start == end)
+                type = JS_None;
+            else switch(strptr[end-1])
+            {
+                case ']':
+                    type = JS_Array;
+                    break;
+                case '}':
+                    type = JS_Object;
+                    break;
+                case '"':
+                    type = JS_String;
+                    break;
+                default:
+                    type = JS_Value;
+                    break;
+            }
+            return true;
+        }
+        bool next_indx()
+        {
+            if(strptr[end] != ',')
+                return false;
+            if(listtype != JS_Array)
+                return false;
+            
+            int brackets[0];
+            ArrayPushBack(brackets, '[');
+            int brack_level = SizeOfArray(brackets);
+            int _start = this->start, _end = 0;
+            int indx = 0;
+            until(_end)
+            {
+                if(brackets[-1] == '"' && strptr[indx] != '"')
+                {
+                    ++indx;
+                    continue;
+                }
+                switch(strptr[indx])
+                {
+                    case '[':
+                    case '{':
+                        ArrayPushBack(brackets, strptr[indx]);
+                        break;
+                    case ']':
+                        if(brackets[-1] != '[')
+                            return false;
+                        if(SizeOfArray(brackets) == brack_level)
+                            _end = indx;
+                        ArrayPopBack(brackets);
+                        break;
+                    case '}':
+                        if(brackets[-1] != '{')
+                            return false;
+                        if(SizeOfArray(brackets) == brack_level)
+                            _end = indx;
+                        ArrayPopBack(brackets);
+                        break;
+                    case '"':
+                        if(brackets[-1] == '"')
+                            ArrayPopBack(brackets);
+                        else ArrayPushBack(brackets, '"');
+                        break;
+                    case ',':
+                        if(SizeOfArray(brackets) == brack_level)
+                            _end = indx;
+                        break;
+                }
+                if(++indx >= this->end)
+                    return false;
+            }
+            if(_start == _end)
+                type = JS_None;
+            else switch(strptr[_end-1])
+            {
+                case ']':
+                    type = JS_Array;
+                    break;
+                case '}':
+                    type = JS_Object;
+                    break;
+                case '"':
+                    type = JS_String;
+                    break;
+                default:
+                    type = JS_Value;
+                    break;
+            }
+            start = _start;
+            end = _end;
+            return true;
+        }
+
+        void scrape_postbuf(char32 buf)
+        {
+            const int ex_len = SizeOfArray(strptr)-end;
+            ResizeArray(buf, ex_len+1);
+            loop(q : 0=..ex_len)
+                buf[q] = strptr[q+end];
+            buf[-1] = 0;
+        }
+    }
+    bool is_ws(char32 c)
+    {
+        switch(c)
+        {
+            case ' ':
+            case '\n':
+            case '\r':
+            case '\t':
+                return true;
+            default:
+                return false;
+        }
+    }
+}
