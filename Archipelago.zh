@@ -15,6 +15,14 @@ namespace Archipelago
         CLIENT_GOAL = 30
     };
 
+    enum SocketStatus
+    {
+        STATUS_DISCONNECTED,
+        STATUS_CONNECTING,
+        STATUS_CONNECTED,
+        STATUS_AUTHENTICATED
+    };
+
     DEFINEL ITEM_PROGRESSIVE = 001Lb;
     DEFINEL ITEM_USEFUL      = 010Lb;
     DEFINEL ITEM_TRAP        = 100Lb;
@@ -218,12 +226,19 @@ namespace Archipelago
     bool did_setup = false;
 
     websocket sock;
+    SocketStatus status;
 
     bool do_deathlink = false;
     int deathlink_amnesty = 0;
     int player_id, player_team;
     bool collected_locations[0];
     bool collected_items[0];
+
+    int quitkey = KEY_Q;
+    char32 quitchar()
+    {
+        return KeyToChar(quitkey,false,true);
+    }
 
     bool checked_location(int id)
     {
@@ -256,17 +271,42 @@ namespace Archipelago
         if(pwd[0])
             printf("[CONNECT] %s:%s (as %s, pwd '%s')\n", ip, port, slot, pwd);
         else printf("[CONNECT] %s:%s (as %s)\n", ip, port, slot);
+        status = STATUS_CONNECTING;
+        int attempt_count;
+        int delay = 0;
+        char32 quit_char = quitchar();
         while(true)
         {
-            sprintf(buf, "%s://%s:%s", ssl ? "wss" : "ws", ip, port);
             if(sock)
             {
                 sock->Free();
-                Waitframe();
+                sock = NULL;
             }
+            if(Input->Key[quitkey])
+            {
+                printf("%c pressed; cancelling connection\n", quit_char);
+                return; //Failed, and user cancelled
+            }
+            if(delay)
+            {
+                --delay;
+                Waitframe();
+                continue;
+            }
+            unless(++attempt_count % 10)
+            {
+                printf("Failing a lot... waiting a bit to try again (Attempts: %d, press %c to quit)\n", attempt_count, quit_char);
+                delay = 15*60;
+                continue;
+            }
+            sprintf(buf, "%s://%s:%s", ssl ? "wss" : "ws", ip, port);
             sock = Game->LoadWebSocket(buf);
             while(sock->State == WEBSOCKET_STATE_CONNECTING)
+            {
+                if(Input->Key[quitkey])
+                    continue 2;
                 Waitframe();
+            }
             if(sock->State == WEBSOCKET_STATE_CLOSED)
             {
                 char32 error[0];
@@ -276,20 +316,20 @@ namespace Archipelago
                     case "endpoint not secure":
                         break;
                     default:
-                        printf("Failed to connect: '%s'\n", error);
+                        printf("Failed to connect (%s): '%s'\n", ssl ? "wss" : "ws", error);
                 }
                 ssl = !ssl;
                 continue;
             }
             if(sock->State != WEBSOCKET_STATE_OPEN)
             {
-                printf("Failed to connect: '%d'\n", sock->State);
+                printf("Failed to connect (%s): '%d'\n", ssl ? "wss" : "ws", sock->State);
                 ssl = !ssl;
                 continue;
             }
             if(!sock)
             {
-                printf("Fucked up error!\n");
+                printf("Fucked up error! (%s)\n", ssl ? "wss" : "ws");
                 ssl = !ssl;
                 continue;
             }
@@ -299,10 +339,12 @@ namespace Archipelago
 
     void disconnect_socket()
     {
-        sock->Free();
+        if(sock)
+            sock->Free();
         sock = NULL;
         ResizeArray(collected_locations, 0);
         ResizeArray(collected_items, 0);
+        status = STATUS_DISCONNECTED;
     }
     
     bool retry()
@@ -346,17 +388,18 @@ namespace Archipelago
 
     generic script APHandler
     {
-        void run()
+        void run(bool end_on_auth)
         {
             #option STRING_SWITCH_CASE_INSENSITIVE on
             ap_setup();
-            loop()
+            bool do_exit = false;
+            until(do_exit)
             {
-                until(sock)
+                until(sock || do_exit)
                     Waitframe();
-                while(sock && update_socket())
+                while(sock && update_socket() && !do_exit)
                 {
-                    while(sock->HasMessage)
+                    while(sock->HasMessage && !do_exit)
                     {
                         char32 msg = sock->Receive();
                         switch(sock->MessageType)
@@ -412,6 +455,7 @@ namespace Archipelago
                                                 resp->add_key_int("build",4);
                                                 resp->add_key_str("class","Version");
                                                 
+                                                status = STATUS_CONNECTED;
                                                 Settings::on_room_info(ref);
                                                 break;
                                             }
@@ -470,6 +514,7 @@ namespace Archipelago
                                                     printf("Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
                                                 if(AP_DEV_LOG)
                                                     printf("[DEV] player_id = %d, player_team = %d, deathlink = %s, amnesty = %d\n", player_id, player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
+                                                status = STATUS_AUTHENTICATED;
                                                 
                                                 Settings::on_connected(ref);
 
@@ -487,6 +532,9 @@ namespace Archipelago
                                                     if(genscr > 0)
                                                         RunGenericScript(genscr);
                                                 }
+
+                                                if(end_on_auth)
+                                                    do_exit = true;
                                                 break;
                                             }
                                             case "PrintJSON":
@@ -549,6 +597,9 @@ namespace Archipelago
                                                         }
                                                     }
                                                 }
+                                                disconnect_socket();
+                                                if(end_on_auth)
+                                                    do_exit = true;
                                                 break;
                                             }
                                             case "ReceivedItems":
@@ -698,7 +749,7 @@ namespace Archipelago
         did_setup = true;
     }
 
-    void ap_connect(char32 _ip, char32 _port, char32 _slot, char32 _pwd, char32 _death_alias = NULL)
+    bool ap_connect(char32 _ip, char32 _port, char32 _slot, char32 _pwd, char32 _death_alias = NULL)
     {
         disconnect_socket();
         sprintf(ip,"%s",_ip[0] ? _ip : "archipelago.gg");
@@ -707,8 +758,11 @@ namespace Archipelago
         sprintf(pwd,"%s",_pwd);
         sprintf(death_alias,"%s",_death_alias ? _death_alias : slot);
         _do_connect();
+        unless(sock)
+            return false;
         if(int scr = CheckGenericScript("APHandler"))
-            RunGenericScript(scr);
+            RunGenericScript(scr, {false});
+        return true;
     }
 
     void send_sync()
