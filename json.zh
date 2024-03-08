@@ -568,6 +568,8 @@ namespace JSON
         {
             if(type != JS_Array)
                 return false;
+            if(end-start < 3)
+                return false;
             if(strptr[start] == '[' && strptr[end-1] == ']')
             {
                 ++start;
