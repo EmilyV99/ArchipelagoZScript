@@ -441,22 +441,24 @@ namespace Archipelago
                             {
                                 if(AP_LOG_COMMUNICATION > 1)
                                     printf("[RECV]: %s\n", msg);
+                                JSONRef parent_ref = new JSONRef(msg);
                                 JSONRef ref = new JSONRef(msg);
                                 JSONRef ref2 = new JSONRef(msg);
-                                ref->find({{-1}});
+                                parent_ref->find({{-1}});
 
                                 JSONRef resp = new JSONRef();
 
                                 char32 buf[1];
 
                                 int q = 0;
-                                if(ref->first_indx())
+                                if(parent_ref->first_indx())
                                     do
                                     {
-                                        if(ref->find({{q},{"cmd"}}))
-                                            ref->get_trim(buf);
+                                        if(parent_ref->find({{q},{"cmd"}}))
+                                            parent_ref->get_trim(buf);
                                         else continue;
-                                        ref->find({{q}});
+                                        parent_ref->find({{q}});
+                                        ref->from(parent_ref);
 
                                         char32 response[] = "[{}]";
                                         resp->strptr = response;
@@ -468,9 +470,8 @@ namespace Archipelago
                                         {
                                             case "RoomInfo":
                                             {
-                                                ref2->from(ref);
-                                                ref2->sub_find({NULL,{"seed_name"}});
-                                                ref2->get_trim(seed);
+                                                ref->sub_find({NULL,{"seed_name"}});
+                                                ref->get_trim(seed);
 
                                                 char32 gamebuf[1];
                                                 Settings::ap_get_game(gamebuf);
@@ -493,6 +494,7 @@ namespace Archipelago
                                                 resp->add_key_str("class","Version");
                                                 
                                                 status = STATUS_CONNECTED;
+                                                ref->from(parent_ref);
                                                 Settings::on_room_info(ref);
                                                 break;
                                             }
@@ -501,15 +503,14 @@ namespace Archipelago
                                                 ResizeArray(checked_locations, 0);
                                                 ResizeArray(collected_items, 0);
 
-                                                ref2->from(ref);
-                                                ref2->sub_find({NULL,{"slot"}});
-                                                player_id = ref2->get_int();
-                                                ref2->from(ref);
-                                                ref2->sub_find({NULL,{"team"}});
-                                                player_team = ref2->get_int();
-                                                ref2->from(ref);
-                                                if(ref2->sub_find({NULL,{"slot_data","base_id"}}))
-                                                    base_id = ref2->get_long();
+                                                ref->sub_find({NULL,{"slot"}});
+                                                player_id = ref->get_int();
+                                                ref->from(parent_ref);
+                                                ref->sub_find({NULL,{"team"}});
+                                                player_team = ref->get_int();
+                                                ref->from(parent_ref);
+                                                if(ref->sub_find({NULL,{"slot_data","base_id"}}))
+                                                    base_id = ref->get_long();
                                                 else
                                                 {
                                                     base_id = 0;
@@ -517,43 +518,43 @@ namespace Archipelago
                                                         printf("No 'base_id' found in 'slot_data'! Using '0'.\n");
                                                 }
 
-                                                ref2->from(ref);
-                                                ref2->sub_find({NULL,{"missing_locations"}});
-                                                if(ref2->first_indx())
+                                                ref->from(parent_ref);
+                                                ref->sub_find({NULL,{"missing_locations"}});
+                                                if(ref->first_indx())
                                                     do
                                                     {
-                                                        int locid = id_to_index(ref2->get_long());
+                                                        int locid = id_to_index(ref->get_long());
                                                         if(locid >= SizeOfArray(checked_locations))
                                                             ResizeArray(checked_locations, locid+1);
                                                     }
-                                                    while(ref2->next_indx());
-
-                                                ref2->from(ref);
-                                                ref2->sub_find({NULL,{"checked_locations"}});
-                                                if(ref2->first_indx())
+                                                    while(ref->next_indx());
+                                                
+                                                ref->from(parent_ref);
+                                                ref->sub_find({NULL,{"checked_locations"}});
+                                                if(ref->first_indx())
                                                     do
                                                     {
-                                                        int locid = id_to_index(ref2->get_long());
+                                                        int locid = id_to_index(ref->get_long());
                                                         if(locid >= SizeOfArray(checked_locations))
                                                             ResizeArray(checked_locations, locid+1);
                                                         checked_locations[locid] = true;
                                                     }
-                                                    while(ref2->next_indx());
-
+                                                    while(ref->next_indx());
+                                                
                                                 do_deathlink = false;
-                                                ref2->from(ref);
-                                                if(ref2->sub_find({NULL,{"slot_data","death_link"}}))
-                                                    if(ref2->get_bool())
+                                                ref->from(parent_ref);
+                                                if(ref->sub_find({NULL,{"slot_data","death_link"}}))
+                                                    if(ref->get_bool())
                                                         do_deathlink = true;
-                                                ref2->from(ref);
-                                                if(ref2->sub_find({NULL,{"slot_data","DeathLink"}}))
-                                                    if(ref2->get_bool())
+                                                ref->from(parent_ref);
+                                                if(ref->sub_find({NULL,{"slot_data","DeathLink"}}))
+                                                    if(ref->get_bool())
                                                         do_deathlink = true;
-                                                ref2->from(ref);
-                                                if(ref2->sub_find({NULL,{"slot_data","deathlink_amnesty"}}))
-                                                    deathlink_amnesty = ref2->get_int();
-                                                else if(ref2->sub_find({NULL,{"slot_data","DeathLinkAmnesty"}}))
-                                                    deathlink_amnesty = ref2->get_int();
+                                                ref->from(parent_ref);
+                                                if(ref->sub_find({NULL,{"slot_data","deathlink_amnesty"}}))
+                                                    deathlink_amnesty = ref->get_int();
+                                                else if(ref->sub_find({NULL,{"slot_data","DeathLinkAmnesty"}}))
+                                                    deathlink_amnesty = ref->get_int();
                                                 else deathlink_amnesty = 0;
                                                 
                                                 if(AP_LOG)
@@ -561,7 +562,7 @@ namespace Archipelago
                                                 if(AP_DEV_LOG)
                                                     printf("[DEV] player_id = %d, player_team = %d, deathlink = %s, amnesty = %d\n", player_id, player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
                                                 status = STATUS_AUTHENTICATED;
-                                                
+                                                ref->from(parent_ref);
                                                 Settings::on_connected(ref);
                                                 unless(sock)
                                                     break;
@@ -688,7 +689,7 @@ namespace Archipelago
                                             }
                                             case "LocationInfo":
                                             {
-                                                if(ref->sub_find({NULL,"locations"}))
+                                                if(ref->sub_find({NULL,{"locations"}}))
                                                 {
                                                     NetworkItem items[0];
                                                     if(ref->first_indx())
@@ -727,6 +728,7 @@ namespace Archipelago
                                             case "Bounced":
                                             {
                                                 Settings::on_bounced(ref);
+                                                ref->from(parent_ref);
                                                 if(ref->find({{q},{"tags"}}))
                                                 {
                                                     if(ref->first_indx())
@@ -778,8 +780,9 @@ namespace Archipelago
                                                 printf("[SEND] %s\n", response);
                                             sock->Send(response);
                                         }
-                                    } while(++q && ref->next_indx());
+                                    } while(++q && parent_ref->next_indx());
 
+                                delete parent_ref;
                                 delete ref;
                                 delete ref2;
                                 delete resp;
@@ -834,19 +837,23 @@ namespace Archipelago
         sock->Send("[{\"cmd\":\"Sync\"}]");
     }
 
-    void send_location_checks(...int[] locations)
+    void send_location_checks_arr(int locations)
     {
         unless(socket_valid()) return;
         char32 msg[] = "[{\"cmd\":\"LocationChecks\",\"locations\":[]}]";
         JSONRef ref = new JSONRef(msg);
         ref->find({{0},{"locations"}});
         for(loc : locations)
-            ref->add_indx_int(loc);
+            ref->add_indx_long(index_to_id(loc));
         sock->Send(msg);
         delete ref;
     }
+    void send_location_checks(...int[] locations)
+    {
+        send_location_checks_arr(locations);
+    }
 
-    void send_location_scouts(int hint_mode, ...int[] locations)
+    void send_location_scouts_arr(int hint_mode, int locations)
     {
         unless(socket_valid()) return;
         char32 msg[0];
@@ -854,9 +861,13 @@ namespace Archipelago
         JSONRef ref = new JSONRef(msg);
         ref->find({{0},{"locations"}});
         for(loc : locations)
-            ref->add_indx_int(loc);
+            ref->add_indx_long(index_to_id(loc));
         sock->Send(msg);
         delete ref;
+    }
+    void send_location_scouts(int hint_mode, ...int[] locations)
+    {
+        send_location_scouts_arr(hint_mode, locations);
     }
 
     void send_status_update(ClientStatus status)
