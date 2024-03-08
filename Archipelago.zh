@@ -5,6 +5,38 @@ namespace Archipelago
     CONFIGB AP_LOG = true;
     CONFIG AP_LOG_COMMUNICATION = 1; // 0 = none, 1 = some, 2 = full
     CONFIGB AP_DEV_LOG = true;
+    //This data can be freely modified
+    int quitkey = KEY_Q;
+    //This data should not be modified unless you know what you are doing
+    char32 ip[1];
+    char32 port[1];
+    char32 slot[1];
+    char32 pwd[1];
+    char32 death_alias[1];
+    long ap_uid;
+
+    bool did_setup = false;
+
+    websocket sock;
+    SocketStatus status;
+
+    bool do_deathlink = false;
+    int deathlink_amnesty = 0;
+
+    int player_id, player_team;
+    char32 seed[1];
+    long base_id;
+    bool checked_locations[0]; //don't read directly, use 'checked_location' / 'mark_location_checked'
+    int collected_items[0]; //don't read directly, use 'collected_item' / 'mark_item_collected'
+    //
+    int id_to_index(long id)
+    {
+        return (id-base_id)*10000;
+    }
+    long index_to_id(long indx)
+    {
+        return (indx/10000)+base_id;
+    }
 
     enum ClientStatus
     {
@@ -28,15 +60,29 @@ namespace Archipelago
     DEFINEL ITEM_TRAP        = 100Lb;
     class NetworkItem
     {
-        int item_id;
-        int location_id;
+        long item_id;
+        long location_id;
+        int item_indx;
+        int location_indx;
         int player_id;
         long flags;
         bool valid;
-        NetworkItem(int iid, int lid, int pid, long fl)
+        NetworkItem(long iid, long lid, int pid, long fl)
         {
             item_id = iid;
             location_id = lid;
+            item_indx = id_to_index(iid);
+            location_indx = id_to_index(lid);
+            player_id = pid;
+            flags = fl;
+            valid = true;
+        }
+        NetworkItem(int iid, int lid, int pid, long fl)
+        {
+            item_id = index_to_id(iid);
+            location_id = index_to_id(lid);
+            item_indx = iid;
+            location_indx = lid;
             player_id = pid;
             flags = fl;
             valid = true;
@@ -47,12 +93,18 @@ namespace Archipelago
 
             JSONRef js = new JSONRef(ref);
             if(js->sub_find({NULL,{"item"}}))
-                item_id = js->get_int();
+            {
+                item_id = js->get_long();
+                item_indx = id_to_index(item_id);
+            }
             else valid = false;
 
             js->from(ref);
             if(js->sub_find({NULL,{"location"}}))
-                location_id = js->get_int();
+            {
+                location_id = js->get_long();
+                location_indx = id_to_index(location_id);
+            }
             else valid = false;
 
             js->from(ref);
@@ -216,51 +268,32 @@ namespace Archipelago
         }
     }
 
-    char32 ip[1];
-    char32 port[1];
-    char32 slot[1];
-    char32 pwd[1];
-    char32 death_alias[1];
-    long ap_uid;
-
-    bool did_setup = false;
-
-    websocket sock;
-    SocketStatus status;
-
-    bool do_deathlink = false;
-    int deathlink_amnesty = 0;
-    int player_id, player_team;
-    bool collected_locations[0];
-    bool collected_items[0];
-
-    int quitkey = KEY_Q;
     char32 quitchar()
     {
         return KeyToChar(quitkey,false,true);
     }
 
-    bool checked_location(int id)
+    bool checked_location(int indx)
     {
-        return id < SizeOfArray(collected_locations) && collected_locations[id];
+        return indx < SizeOfArray(checked_locations) && checked_locations[indx];
     }
 
-    bool collected_item(int id)
+    int collected_item(int indx)
     {
-        return id < SizeOfArray(collected_items) && collected_items[id];
+        return indx < SizeOfArray(collected_items) ? collected_items[indx] : 0;
     }
 
-    void mark_location_checked(int id)
+    void mark_location_checked(int indx)
     {
-        if(id >= SizeOfArray(collected_locations))
-            ResizeArray(collected_locations, id+1);
-        collected_locations[id] = true;
+        if(indx >= SizeOfArray(checked_locations))
+            ResizeArray(checked_locations, indx+1);
+        checked_locations[indx] = true;
     }
-    void mark_item_collected(int id)
+    void mark_item_collected(int indx)
     {
-        if(id >= SizeOfArray(collected_items))
-            ResizeArray(collected_items, id+1);
-        collected_items[id] = true;
+        if(indx >= SizeOfArray(collected_items))
+            ResizeArray(collected_items, indx+1);
+        ++collected_items[indx];
     }
 
     void connect_socket()
@@ -342,7 +375,7 @@ namespace Archipelago
         if(sock)
             sock->Free();
         sock = NULL;
-        ResizeArray(collected_locations, 0);
+        ResizeArray(checked_locations, 0);
         ResizeArray(collected_items, 0);
         status = STATUS_DISCONNECTED;
     }
@@ -399,7 +432,7 @@ namespace Archipelago
                     Waitframe();
                 while(sock && update_socket() && !do_exit)
                 {
-                    while(sock->HasMessage && !do_exit)
+                    while(sock && sock->HasMessage && !do_exit)
                     {
                         char32 msg = sock->Receive();
                         switch(sock->MessageType)
@@ -435,6 +468,10 @@ namespace Archipelago
                                         {
                                             case "RoomInfo":
                                             {
+                                                ref2->from(ref);
+                                                ref2->sub_find({NULL,{"seed_name"}});
+                                                ref2->get_trim(seed);
+
                                                 char32 gamebuf[1];
                                                 Settings::ap_get_game(gamebuf);
                                                 resp->add_key_str("cmd","Connect");
@@ -461,7 +498,7 @@ namespace Archipelago
                                             }
                                             case "Connected":
                                             {
-                                                ResizeArray(collected_locations, 0);
+                                                ResizeArray(checked_locations, 0);
                                                 ResizeArray(collected_items, 0);
 
                                                 ref2->from(ref);
@@ -470,15 +507,24 @@ namespace Archipelago
                                                 ref2->from(ref);
                                                 ref2->sub_find({NULL,{"team"}});
                                                 player_team = ref2->get_int();
+                                                ref2->from(ref);
+                                                if(ref2->sub_find({NULL,{"slot_data","base_id"}}))
+                                                    base_id = ref2->get_long();
+                                                else
+                                                {
+                                                    base_id = 0;
+                                                    if(AP_LOG)
+                                                        printf("No 'base_id' found in 'slot_data'! Using '0'.\n");
+                                                }
 
                                                 ref2->from(ref);
                                                 ref2->sub_find({NULL,{"missing_locations"}});
                                                 if(ref2->first_indx())
                                                     do
                                                     {
-                                                        int locid = ref2->get_int();
-                                                        if(locid >= SizeOfArray(collected_locations))
-                                                            ResizeArray(collected_locations, locid+1);
+                                                        int locid = id_to_index(ref2->get_long());
+                                                        if(locid >= SizeOfArray(checked_locations))
+                                                            ResizeArray(checked_locations, locid+1);
                                                     }
                                                     while(ref2->next_indx());
 
@@ -487,10 +533,10 @@ namespace Archipelago
                                                 if(ref2->first_indx())
                                                     do
                                                     {
-                                                        int locid = ref2->get_int();
-                                                        if(locid >= SizeOfArray(collected_locations))
-                                                            ResizeArray(collected_locations, locid+1);
-                                                        collected_locations[locid] = true;
+                                                        int locid = id_to_index(ref2->get_long());
+                                                        if(locid >= SizeOfArray(checked_locations))
+                                                            ResizeArray(checked_locations, locid+1);
+                                                        checked_locations[locid] = true;
                                                     }
                                                     while(ref2->next_indx());
 
@@ -517,6 +563,8 @@ namespace Archipelago
                                                 status = STATUS_AUTHENTICATED;
                                                 
                                                 Settings::on_connected(ref);
+                                                unless(sock)
+                                                    break;
 
                                                 if(do_deathlink)
                                                 {
@@ -539,7 +587,10 @@ namespace Archipelago
                                             }
                                             case "PrintJSON":
                                             {
-                                                if(Settings::on_print_json(ref))
+                                                bool pr = Settings::on_print_json(ref);
+                                                unless(sock)
+                                                    break;
+                                                if(pr)
                                                 {
                                                     if(ref->find({{q},{"data"}}))
                                                     {
@@ -614,19 +665,23 @@ namespace Archipelago
                                                             NetworkItem itm = new NetworkItem(ref);
                                                             if(itm->valid)
                                                             {
-                                                                mark_item_collected(itm->item_id);
                                                                 if(itm->player_id == player_id)
                                                                 {
-                                                                    mark_location_checked(itm->location_id);
-                                                                    Settings::do_remove_location(itm->location_id);
+                                                                    mark_location_checked(itm->location_indx);
+                                                                    Settings::do_remove_location(itm->location_indx);
                                                                 }
                                                                 ArrayPushBack(items, itm);
                                                             }
                                                             else delete itm;
                                                         } while(ref->next_indx());
                                                         Settings::on_item_received(items);
-                                                        for(item : items)
-                                                            delete item;
+                                                        unless(sock)
+                                                            break;
+                                                        for(itm : items)
+                                                        {
+                                                            mark_item_collected(itm->item_id);
+                                                            delete itm;
+                                                        }
                                                     }
                                                 }
                                                 break;
@@ -646,6 +701,8 @@ namespace Archipelago
                                                             else delete itm;
                                                         } while(ref->next_indx());
                                                         Settings::on_location_scouts(items);
+                                                        unless(sock)
+                                                            break;
                                                         for(item : items)
                                                             delete item;
                                                     }
@@ -655,11 +712,13 @@ namespace Archipelago
                                             case "RoomUpdate":
                                             {
                                                 Settings::on_room_update(ref);
+                                                unless(sock)
+                                                    break;
                                                 if(ref->find({{q},{"checked_locations"}}))
                                                     if(ref->first_indx())
                                                         do
                                                         {
-                                                            int id = ref->get_int();
+                                                            int id = id_to_index(ref->get_long());
                                                             mark_location_checked(id);
                                                             Settings::do_remove_location(id);
                                                         } while(ref->next_indx());
@@ -711,6 +770,8 @@ namespace Archipelago
                                                 printf("[???]: %s\n", msg);
                                                 break;
                                         }
+                                        unless(sock)
+                                            break;
                                         if(strlen(response) > 4)
                                         {
                                             if(AP_LOG_COMMUNICATION > 1)
@@ -731,6 +792,8 @@ namespace Archipelago
                     }
                     Waitframe();
                 }
+                if(end_on_auth && !sock)
+                    break;
             }
         }
     }
