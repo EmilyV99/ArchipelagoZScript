@@ -18,7 +18,7 @@ namespace JSON
         Type listtype;
 
         JSONRef();
-        JSONRef(char32 str) {strptr = str;}
+        JSONRef(char32 str) {strptr = str; end = strlen(str);}
         JSONRef(JSONRef other)
         {
             from(other);
@@ -98,12 +98,14 @@ namespace JSON
         }
         bool add_key(char32 key, char32 val = NULL)
         {
+            bool clamped = false;
             if(strptr[end] != '}')
             {
                 if(strptr[start] == '{' && strptr[end-1] == '}')
                 {
                     ++start;
                     --end;
+                    clamped = true;
                 }
                 else return false;
             }
@@ -122,16 +124,23 @@ namespace JSON
                 sprintf(strptr, "%s\"%s\":%s%s", strptr, key, val ? val : "\"\"", postbuf);
             else sprintf(strptr, "%s,\"%s\":%s%s", strptr, key, val ? val : "\"\"", postbuf);
             end += SizeOfArray(strptr)-sz;
+            if(clamped)
+            {
+                --start;
+                ++end;
+            }
             return true;
         }
         bool add_key_str(char32 key, char32 str)
         {
+            bool clamped = false;
             if(strptr[end] != '}')
             {
                 if(strptr[start] == '{' && strptr[end-1] == '}')
                 {
                     ++start;
                     --end;
+                    clamped = true;
                 }
                 else return false;
             }
@@ -150,6 +159,11 @@ namespace JSON
                 sprintf(strptr, "%s\"%s\":\"%s\"%s", strptr, key, str, postbuf);
             else sprintf(strptr, "%s,\"%s\":\"%s\"%s", strptr, key, str, postbuf);
             end += SizeOfArray(strptr)-sz;
+            if(clamped)
+            {
+                --start;
+                ++end;
+            }
             return true;
         }
         bool add_key_bool(char32 key, bool b)
@@ -158,12 +172,14 @@ namespace JSON
         }
         bool add_key_int(char32 key, untyped val)
         {
+            bool clamped = false;
             if(strptr[end] != '}')
             {
                 if(strptr[start] == '{' && strptr[end-1] == '}')
                 {
                     ++start;
                     --end;
+                    clamped = true;
                 }
                 else return false;
             }
@@ -182,16 +198,23 @@ namespace JSON
                 sprintf(strptr, "%s\"%s\":%d%s", strptr, key, val, postbuf);
             else sprintf(strptr, "%s,\"%s\":%d%s", strptr, key, val, postbuf);
             end += SizeOfArray(strptr)-sz;
+            if(clamped)
+            {
+                --start;
+                ++end;
+            }
             return true;
         }
         bool add_key_long(char32 key, untyped val)
         {
+            bool clamped = false;
             if(strptr[end] != '}')
             {
                 if(strptr[start] == '{' && strptr[end-1] == '}')
                 {
                     ++start;
                     --end;
+                    clamped = true;
                 }
                 else return false;
             }
@@ -210,16 +233,25 @@ namespace JSON
                 sprintf(strptr, "%s\"%s\":%l%s", strptr, key, val, postbuf);
             else sprintf(strptr, "%s,\"%s\":%l%s", strptr, key, val, postbuf);
             end += SizeOfArray(strptr)-sz;
+            if(clamped)
+            {
+                --start;
+                ++end;
+            }
             return true;
         }
         bool add_indx(char32 val = NULL)
         {
+            if(type != JS_Array)
+                return false;
+            bool clamped = false;
             if(strptr[end] != ']')
             {
                 if(strptr[start] == '[' && strptr[end-1] == ']')
                 {
                     ++start;
                     --end;
+                    clamped = true;
                 }
                 else return false;
             }
@@ -233,16 +265,25 @@ namespace JSON
                 sprintf(strptr, "%s%s%s", strptr, val ? val : "\"\"", postbuf);
             else sprintf(strptr, "%s,%s%s", strptr, val ? val : "\"\"", postbuf);
             end += SizeOfArray(strptr)-sz;
+            if(clamped)
+            {
+                --start;
+                ++end;
+            }
             return true;
         }
         bool add_indx_str(char32 str)
         {
+            if(type != JS_Array)
+                return false;
+            bool clamped = false;
             if(strptr[end] != ']')
             {
                 if(strptr[start] == '[' && strptr[end-1] == ']')
                 {
                     ++start;
                     --end;
+                    clamped = true;
                 }
                 else return false;
             }
@@ -256,20 +297,31 @@ namespace JSON
                 sprintf(strptr, "%s\"%s\"%s", strptr, str, postbuf);
             else sprintf(strptr, "%s,\"%s\"%s", strptr, str, postbuf);
             end += SizeOfArray(strptr)-sz;
+            if(clamped)
+            {
+                --start;
+                ++end;
+            }
             return true;
         }
         bool add_indx_bool(bool b)
         {
+            if(type != JS_Array)
+                return false;
             return add_indx(b ? "true" : "false");
         }
         bool add_indx_int(untyped val)
         {
+            if(type != JS_Array)
+                return false;
+            bool clamped = false;
             if(strptr[end] != ']')
             {
                 if(strptr[start] == '[' && strptr[end-1] == ']')
                 {
                     ++start;
                     --end;
+                    clamped = true;
                 }
                 else return false;
             }
@@ -283,16 +335,25 @@ namespace JSON
                 sprintf(strptr, "%s%d%s", strptr, val, postbuf);
             else sprintf(strptr, "%s,%d%s", strptr, val, postbuf);
             end += SizeOfArray(strptr)-sz;
+            if(clamped)
+            {
+                --start;
+                ++end;
+            }
             return true;
         }
         bool add_indx_long(untyped val)
         {
+            if(type != JS_Array)
+                return false;
+            bool clamped = false;
             if(strptr[end] != ']')
             {
                 if(strptr[start] == '[' && strptr[end-1] == ']')
                 {
                     ++start;
                     --end;
+                    clamped = true;
                 }
                 else return false;
             }
@@ -306,10 +367,16 @@ namespace JSON
                 sprintf(strptr, "%s%l%s", strptr, val, postbuf);
             else sprintf(strptr, "%s,%l%s", strptr, val, postbuf);
             end += SizeOfArray(strptr)-sz;
+            if(clamped)
+            {
+                --start;
+                ++end;
+            }
             return true;
         }
         int count_indx()
         {
+            int cache_start = start, cache_end = end;
             if(strptr[end] != ']')
             {
                 if(strptr[start] == '[' && strptr[end-1] == ']')
@@ -323,7 +390,6 @@ namespace JSON
             int brackets[0];
             ArrayPushBack(brackets, '[');
             int brack_level = SizeOfArray(brackets);
-            int _start = 0, _end = 0;
             int indx = 0;
             int q = 0;
             while(SizeOfArray(brackets))
@@ -366,6 +432,8 @@ namespace JSON
                 if(++indx >= end)
                     return 0;
             }
+            start = cache_start;
+            end = cache_end;
             return q;
         }
         bool find(untyped search_arr)
@@ -575,88 +643,11 @@ namespace JSON
                 ++start;
                 --end;
             }
-            else
-            {
-                int brackets[0];
-                ArrayPushBack(brackets, '[');
-                int brack_level = SizeOfArray(brackets);
-                int _start = this->start, _end = 0;
-                int indx = _start;
-                until(_end)
-                {
-                    if(brackets[-1] == '"' && strptr[indx] != '"')
-                    {
-                        ++indx;
-                        continue;
-                    }
-                    switch(strptr[indx])
-                    {
-                        case '[':
-                        case '{':
-                            ArrayPushBack(brackets, strptr[indx]);
-                            break;
-                        case ']':
-                            if(brackets[-1] != '[')
-                                return false;
-                            if(SizeOfArray(brackets) == brack_level)
-                                _end = indx;
-                            ArrayPopBack(brackets);
-                            break;
-                        case '}':
-                            if(brackets[-1] != '{')
-                                return false;
-                            if(SizeOfArray(brackets) == brack_level)
-                                _end = indx;
-                            ArrayPopBack(brackets);
-                            break;
-                        case '"':
-                            if(brackets[-1] == '"')
-                                ArrayPopBack(brackets);
-                            else ArrayPushBack(brackets, '"');
-                            break;
-                        case ',':
-                            if(SizeOfArray(brackets) == brack_level)
-                                _end = indx;
-                            break;
-                    }
-                    if(!_end && ++indx > this->end)
-                        return false;
-                }
-                start = _start;
-                end = _end;
-            }
-            listtype = JS_Array;
-            if(start == end)
-                type = JS_None;
-            else switch(strptr[end-1])
-            {
-                case ']':
-                    type = JS_Array;
-                    break;
-                case '}':
-                    type = JS_Object;
-                    break;
-                case '"':
-                    type = JS_String;
-                    break;
-                default:
-                    type = JS_Value;
-                    break;
-            }
-            return true;
-        }
-        bool next_indx()
-        {
-            if(strptr[end] != ',')
-                return false;
-            if(listtype != JS_Array)
-                return false;
-            
             int brackets[0];
             ArrayPushBack(brackets, '[');
             int brack_level = SizeOfArray(brackets);
             int _start = this->start, _end = 0;
-            int indx = 0;
+            int indx = _start;
             until(_end)
             {
                 if(brackets[-1] == '"' && strptr[indx] != '"')
@@ -694,8 +685,82 @@ namespace JSON
                             _end = indx;
                         break;
                 }
-                if(++indx >= this->end)
+                if(!_end && ++indx > this->end)
                     return false;
+            }
+            start = _start;
+            end = _end;
+            
+            listtype = JS_Array;
+            if(start == end)
+                type = JS_None;
+            else switch(strptr[end-1])
+            {
+                case ']':
+                    type = JS_Array;
+                    break;
+                case '}':
+                    type = JS_Object;
+                    break;
+                case '"':
+                    type = JS_String;
+                    break;
+                default:
+                    type = JS_Value;
+                    break;
+            }
+            return true;
+        }
+        bool next_indx()
+        {
+            if(strptr[end] != ',')
+                return false;
+            if(listtype != JS_Array)
+                return false;
+            
+            int brackets[0];
+            ArrayPushBack(brackets, '[');
+            int brack_level = SizeOfArray(brackets);
+            int _start = this->end+1, _end = 0;
+            int indx = _start;
+            until(_end)
+            {
+                if(brackets[-1] == '"' && strptr[indx] != '"')
+                {
+                    ++indx;
+                    continue;
+                }
+                switch(strptr[indx])
+                {
+                    case '[':
+                    case '{':
+                        ArrayPushBack(brackets, strptr[indx]);
+                        break;
+                    case ']':
+                        if(brackets[-1] != '[')
+                            return false;
+                        if(SizeOfArray(brackets) == brack_level)
+                            _end = indx;
+                        ArrayPopBack(brackets);
+                        break;
+                    case '}':
+                        if(brackets[-1] != '{')
+                            return false;
+                        if(SizeOfArray(brackets) == brack_level)
+                            _end = indx;
+                        ArrayPopBack(brackets);
+                        break;
+                    case '"':
+                        if(brackets[-1] == '"')
+                            ArrayPopBack(brackets);
+                        else ArrayPushBack(brackets, '"');
+                        break;
+                    case ',':
+                        if(SizeOfArray(brackets) == brack_level)
+                            _end = indx;
+                        break;
+                }
+                ++indx;
             }
             if(_start == _end)
                 type = JS_None;
@@ -726,6 +791,12 @@ namespace JSON
             loop(q : 0=..ex_len)
                 buf[q] = strptr[q+end];
             buf[-1] = 0;
+        }
+        void print()
+        {
+            char32 buf[1];
+            get(buf);
+            printf("%s\n",buf);
         }
     }
     bool is_ws(char32 c)
