@@ -28,9 +28,11 @@ namespace Archipelago::Settings
         //https://github.com/ArchipelagoMW/Archipelago/blob/main/docs/network%20protocol.md#Connected
 
     }
-    void on_item_received(NetworkItem itemlist)
+    void on_item_received(NetworkItem itm, int total_count)
     {
-        //itemlist is an ARRAY of NetworkItems, which have been sent to the player
+        //itemlist is a SINGLE NetworkItem, which has been sent to the player
+        //total_count is how many of this item you now own in total
+        //'mark_item_collected()' is already called for you for this item, just before this.
     }
     void on_location_scouts(NetworkItem itemlist)
     {
@@ -65,6 +67,6 @@ namespace Archipelago::Settings
     void do_remove_location(int id)
     {
         //forcibly mark this location as "already collected"
-        
+
     }
 }
