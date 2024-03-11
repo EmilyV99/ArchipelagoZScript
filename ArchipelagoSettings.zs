@@ -33,10 +33,17 @@ namespace Archipelago::Settings
 		//itemlist is a SINGLE NetworkItem, which has been sent to the player
 		//total_count is how many of this item you now own in total
 		//'mark_item_collected()' is already called for you for this item, just before this.
+		//'itm->localize_item_id()' gives you the item's id relative to the base id
+		//'itm->localize_location_id()' does the same for the location; but this is only valid to do if
+		//    'itm->player_id == Archipelago::ap_player_id'
+		//'itm->player_id' is the ID of the player who sent the item
 	}
-	void on_location_scouts(NetworkItem itemlist)
+	void on_location_scouts(NetworkItem itm)
 	{
-		//itemlist is an ARRAY of NetworkItems, responding to a LocationScouts request
+		//itm is a NetworkItem, which has been hinted via a LocationScouts packet.
+		//'itm->item_id' is the item's string ID
+		//'itm->location_id' is the string ID for the location
+		//'itm->player_id' is the ID of the player who will receive the item
 	}
 	void on_room_update(JSONRef ref)
 	{

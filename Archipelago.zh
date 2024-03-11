@@ -24,7 +24,7 @@ namespace Archipelago
 	bool do_deathlink = false;
 	int deathlink_amnesty = 0;
 
-	int player_id, player_team;
+	int ap_player_id, ap_player_team;
 	char32 seed[1];
 	long base_id;
 	int num_items, num_locs;
@@ -62,29 +62,17 @@ namespace Archipelago
 	DEFINEL ITEM_TRAP        = 100Lb;
 	class NetworkItem
 	{
-		long item_id;
-		long location_id;
-		int item_indx;
-		int location_indx;
+		char32 item_id[1];
+		char32 location_id[1];
 		int player_id;
 		long flags;
 		bool valid;
-		NetworkItem(long iid, long lid, int pid, long fl)
+		NetworkItem(char32 iid, char32 lid, int pid, long fl)
 		{
-			item_id = iid;
-			location_id = lid;
-			item_indx = id_to_index(iid);
-			location_indx = id_to_index(lid);
-			player_id = pid;
-			flags = fl;
-			valid = true;
-		}
-		NetworkItem(int iid, int lid, int pid, long fl)
-		{
-			item_id = index_to_id(iid);
-			location_id = index_to_id(lid);
-			item_indx = iid;
-			location_indx = lid;
+			if(iid)
+				sprintf(item_id,"%s",iid);
+			if(lid)
+				sprintf(location_id,"%s",lid);
 			player_id = pid;
 			flags = fl;
 			valid = true;
@@ -100,18 +88,12 @@ namespace Archipelago
 
 			JSONRef js = new JSONRef(ref);
 			if(js->sub_find({NULL,{"item"}}))
-			{
-				item_id = js->get_long();
-				item_indx = id_to_index(item_id);
-			}
+				js->get_trim(item_id);
 			else valid = false;
 
 			js->from(ref);
 			if(js->sub_find({NULL,{"location"}}))
-			{
-				location_id = js->get_long();
-				location_indx = id_to_index(location_id);
-			}
+				js->get_trim(location_id);
 			else valid = false;
 
 			js->from(ref);
@@ -125,6 +107,36 @@ namespace Archipelago
 			else valid = false;
 
 			delete js;
+		}
+		int localize_item_id()
+		{
+			return id_to_index(atol(item_id));
+		}
+		int localize_location_id()
+		{
+			return id_to_index(atol(location_id));
+		}
+		bool is_filler()
+		{
+			return !(flags & 111Lb);
+		}
+		bool is_progression()
+		{
+			return flags & 001Lb;
+		}
+		bool is_useful()
+		{
+			return flags & 010Lb;
+		}
+		bool is_trap()
+		{
+			return flags & 100Lb;
+		}
+		void print()
+		{
+			if(valid)
+				printf("ITEM: id %s, location %s, player %d, flags %l\n", item_id, location_id, player_id, flags);
+			else printf("ITEM: INVALID\n");
 		}
 	}
 	
@@ -185,7 +197,7 @@ namespace Archipelago
 		void on_room_info(JSONRef ref);
 		void on_connected(JSONRef ref);
 		void on_item_received(NetworkItem itm, int total_count);
-		void on_location_scouts(NetworkItem itemlist);
+		void on_location_scouts(NetworkItem itm);
 		void on_room_update(JSONRef ref);
 		bool on_print_json(JSONRef ref) : default true;
 		void on_bounced(JSONRef ref);
@@ -506,10 +518,10 @@ namespace Archipelago
 												ResizeArray(checked_locations, 0);
 
 												ref->sub_find({NULL,{"slot"}});
-												player_id = ref->get_int();
+												ap_player_id = ref->get_int();
 												ref->from(parent_ref);
 												ref->sub_find({NULL,{"team"}});
-												player_team = ref->get_int();
+												ap_player_team = ref->get_int();
 												ref->from(parent_ref);
 												ref->sub_find({NULL,{"slot_data"}});
 												ref2->from(ref);
@@ -575,7 +587,7 @@ namespace Archipelago
 												if(AP_LOG)
 													printf("Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
 												if(AP_DEV_LOG)
-													printf("[DEV] player_id = %d, player_team = %d, deathlink = %s, amnesty = %d\n", player_id, player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
+													printf("[DEV] ap_player_id = %d, ap_player_team = %d, deathlink = %s, amnesty = %d\n", ap_player_id, ap_player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
 												status = STATUS_AUTHENTICATED;
 												ref->from(parent_ref);
 												Settings::on_connected(ref);
@@ -685,20 +697,22 @@ namespace Archipelago
 															itm->from(ref);
 															if(itm->valid)
 															{
-																if(itm->player_id == player_id)
+																if(itm->player_id == ap_player_id)
 																{
-																	mark_location_checked(itm->location_indx);
-																	Settings::do_remove_location(itm->location_indx);
+																	int indx = itm->localize_location_id();
+																	mark_location_checked(indx);
+																	Settings::do_remove_location(indx);
 																}
+																int item_indx = itm->localize_item_id();
 																if(syncing)
 																{
-																	int idx = itm->item_indx;
+																	int idx = item_indx;
 																	++sync_count[idx];
 																	if(sync_count[idx] <= collected_items[idx])
 																		continue; //already collected
 																}
-																mark_item_collected(itm->item_indx)
-																Settings::on_item_received(itm, collected_item(itm->item_indx));
+																mark_item_collected(item_indx);
+																Settings::on_item_received(itm, collected_item(item_indx));
 															}
 														} while(ref->next_indx());
 														delete itm;
@@ -714,24 +728,21 @@ namespace Archipelago
 													NetworkItem items[0];
 													if(ref->first_indx())
 													{
+														NetworkItem itm = new NetworkItem();
 														do
 														{
-															NetworkItem itm = new NetworkItem(ref);
+															itm->from(ref);
 															if(itm->valid)
-																ArrayPushBack(items, itm);
-															else delete itm;
+																Settings::on_location_scouts(itm);
 														} while(ref->next_indx());
-														Settings::on_location_scouts(items);
-														unless(sock)
-															break;
-														for(item : items)
-															delete item;
+														delete itm;
 													}
 												}
 												break;
 											}
 											case "RoomUpdate":
 											{
+												ref->print();
 												Settings::on_room_update(ref);
 												unless(sock)
 													break;
