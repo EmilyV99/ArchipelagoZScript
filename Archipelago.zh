@@ -3,7 +3,7 @@ namespace Archipelago
 {
 	using namespace JSON;
 	CONFIGB AP_LOG = true;
-	CONFIG AP_LOG_COMMUNICATION = 1; // 0 = none, 1 = some, 2 = full
+	CONFIG AP_LOG_COMMUNICATION = 2; // 0 = none, 1 = some, 2 = full
 	CONFIGB AP_DEV_LOG = true;
 	//This data can be freely modified
 	int quitkey = KEY_Q;
@@ -470,7 +470,9 @@ namespace Archipelago
 									do
 									{
 										if(parent_ref->find({{q},{"cmd"}}))
+										{
 											parent_ref->get_trim(buf);
+										}
 										else continue;
 										parent_ref->find({{q}});
 										ref->from(parent_ref);
@@ -865,7 +867,10 @@ namespace Archipelago
 	void send_sync()
 	{
 		unless(socket_valid()) return;
-		sock->Send("[{\"cmd\":\"Sync\"}]");
+		char32 msg[] = "[{\"cmd\":\"Sync\"}]";
+		if(AP_LOG_COMMUNICATION > 1)
+			printf("[SEND] %s\n", msg);
+		sock->Send(msg);
 		syncing = true;
 	}
 
@@ -877,6 +882,8 @@ namespace Archipelago
 		ref->find({{0},{"locations"}});
 		for(loc : locations)
 			ref->add_indx_long(index_to_id(loc));
+		if(AP_LOG_COMMUNICATION > 1)
+			printf("[SEND] %s\n", msg);
 		sock->Send(msg);
 		delete ref;
 	}
@@ -888,13 +895,20 @@ namespace Archipelago
 	void send_location_scouts_arr(int hint_mode, int locations)
 	{
 		unless(socket_valid()) return;
-		char32 msg[0];
-		sprintf(msg, "[{\"cmd\":\"LocationScouts\",\"locations\":[],\"create_as_hint\":%d}]",hint_mode);
+		int sz = SizeOfArray(locations);
+		DEFINE MAX_PER_PACKET = 75; //limits the size of return packets, to prevent going over MAX_INT characters
+		char32 msg[1];
 		JSONRef ref = new JSONRef(msg);
-		ref->find({{0},{"locations"}});
-		for(loc : locations)
-			ref->add_indx_long(index_to_id(loc));
-		sock->Send(msg);
+		loop(packet : 0=..Ceiling(sz/MAX_PER_PACKET))
+		{
+			sprintf(msg, "[{\"cmd\":\"LocationScouts\",\"locations\":[],\"create_as_hint\":%d}]",hint_mode);
+			ref->find({{0},{"locations"}});
+			loop(q : (packet*MAX_PER_PACKET)=..Min(sz,(packet+1)*MAX_PER_PACKET))
+				ref->add_indx_long(index_to_id(locations[q]));
+			if(AP_LOG_COMMUNICATION > 1)
+				printf("[SEND] %s\n", msg);
+			sock->Send(msg);
+		}
 		delete ref;
 	}
 	void send_location_scouts(int hint_mode, ...int[] locations)
@@ -907,6 +921,8 @@ namespace Archipelago
 		unless(socket_valid()) return;
 		char32 msg[0];
 		sprintf(msg, "[{\"cmd\":\"StatusUpdate\",\"status\":%d}]",status);
+		if(AP_LOG_COMMUNICATION > 1)
+			printf("[SEND] %s\n", msg);
 		sock->Send(msg);
 	}
 
@@ -915,6 +931,8 @@ namespace Archipelago
 		unless(socket_valid()) return;
 		char32 msg[0];
 		sprintf(msg, "[{\"cmd\":\"Say\",\"text\":%s}]",msg);
+		if(AP_LOG_COMMUNICATION > 1)
+			printf("[SEND] %s\n", msg);
 		sock->Send(msg);
 	}
 }
