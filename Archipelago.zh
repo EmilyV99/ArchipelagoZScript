@@ -3,7 +3,7 @@ namespace Archipelago
 {
 	using namespace JSON;
 	CONFIGB AP_LOG = true;
-	CONFIG AP_LOG_COMMUNICATION = 2; // 0 = none, 1 = some, 2 = full
+	CONFIG AP_LOG_COMMUNICATION = 1; // 0 = none, 1 = some, 2 = full
 	CONFIGB AP_DEV_LOG = true;
 	//This data can be freely modified
 	int quitkey = KEY_Q;
@@ -19,7 +19,7 @@ namespace Archipelago
 	bool syncing = false;
 
 	websocket sock;
-	SocketStatus status;
+	ConnectionStatus status;
 
 	bool do_deathlink = false;
 	int deathlink_amnesty = 0;
@@ -30,6 +30,9 @@ namespace Archipelago
 	int num_items, num_locs;
 	bool checked_locations[0];
 	int collected_items[0];
+	NetworkPlayer players[0];
+	NetworkSlot slots[0];
+	char32 location_data_json[1];
 	//
 	int id_to_index(long id)
 	{
@@ -49,12 +52,13 @@ namespace Archipelago
 		CLIENT_GOAL = 30
 	};
 
-	enum SocketStatus
+	enum ConnectionStatus
 	{
 		STATUS_DISCONNECTED,
 		STATUS_CONNECTING,
 		STATUS_CONNECTED,
-		STATUS_AUTHENTICATED
+		STATUS_AUTHENTICATED,
+		STATUS_DATA_LOADED
 	};
 
 	DEFINEL ITEM_PROGRESSIVE = 001Lb;
@@ -67,6 +71,9 @@ namespace Archipelago
 		int player_id;
 		long flags;
 		bool valid;
+		//Only has names if filled from DataPackages
+		char32 item_name[1];
+		char32 location_name[1];
 		NetworkItem(char32 iid, char32 lid, int pid, long fl)
 		{
 			if(iid)
@@ -105,6 +112,13 @@ namespace Archipelago
 			if(js->sub_find({NULL,{"flags"}}))
 				flags = js->get_long();
 			else valid = false;
+
+			js->from(ref);
+			if(js->sub_find({NULL,{"item_name"}}))
+				js->get_trim(item_name);
+			js->from(ref);
+			if(js->sub_find({NULL,{"location_name"}}))
+				js->get_trim(location_name);
 
 			delete js;
 		}
@@ -182,7 +196,28 @@ namespace Archipelago
 			delete js;
 		}
 	}
+	class NetworkSlot
+	{
+		char32 name[1];
+		char32 game[1];
+		bool valid;
+		NetworkSlot(JSONRef ref)
+		{
+			valid = true;
 
+			JSONRef js = new JSONRef(ref);
+			if(js->sub_find({NULL,{"name"}}))
+				js->get_trim(name);
+			else valid = false;
+
+			js->from(ref);
+			if(js->sub_find({NULL,{"game"}}))
+				js->get_trim(game);
+			else valid = false;
+
+			delete js;
+		}
+	}
 	namespace Settings
 	{
 		DEFINEL ITEMS_NONE                  = 000Lb;
@@ -311,6 +346,24 @@ namespace Archipelago
 		++collected_items[indx];
 	}
 
+	NetworkItem check_location_info(int indx) //returns NULL or a NetworkItem from the initialized location info
+	{
+		JSONRef ref = new JSONRef(location_data_json);
+		char32 key[1];
+		sprintf(key, "%l", index_to_id(indx));
+		if(ref->find({NULL,{key}}))
+		{
+			NetworkItem ret = new NetworkItem(ref);
+			delete ref;
+			if(ret->valid)
+				return ret;
+			delete ret;
+			return NULL;
+		}
+		delete ref;
+		return NULL;
+	}
+
 	void connect_socket()
 	{
 		clear_requests();
@@ -434,9 +487,15 @@ namespace Archipelago
 		}
 	}
 
+	enum APHandlerEndCond
+	{
+		APH_END_NEVER,
+		APH_END_AUTH,
+		APH_END_DATA
+	};
 	generic script APHandler
 	{
-		void run(bool end_on_auth)
+		void run(APHandlerEndCond end_cond)
 		{
 			#option STRING_SWITCH_CASE_INSENSITIVE on
 			ap_setup();
@@ -476,6 +535,7 @@ namespace Archipelago
 										else continue;
 										parent_ref->find({{q}});
 										ref->from(parent_ref);
+										ref2->from(ref);
 
 										char32 response[] = "[{}]";
 										resp->strptr = response;
@@ -489,6 +549,9 @@ namespace Archipelago
 											{
 												ref->sub_find({NULL,{"seed_name"}});
 												ref->get_trim(seed);
+												ref->from(parent_ref);
+												ref->sub_find({NULL,{"datapackage_checksums"}});
+												check_datapack_checksums(ref);
 
 												char32 gamebuf[1];
 												Settings::ap_get_game(gamebuf);
@@ -570,6 +633,36 @@ namespace Archipelago
 													}
 													while(ref->next_indx());
 												
+												ref->from(parent_ref);
+												ref->sub_find({NULL,{"players"}});
+												for(p : players)
+													delete p;
+												ResizeArray(players, 0);
+												if(ref->first_indx())
+													do
+													{
+														NetworkPlayer p = new NetworkPlayer(ref);
+														GlobalObject(p);
+														ArrayPushBack(players,p);
+													}
+													while(ref->next_indx());
+												
+												ref->from(parent_ref);
+												ref->sub_find({NULL,{"slot_info"}});
+												for(s : slots)
+													delete s;
+												ResizeArray(slots, 0);
+												char32 kbuf[1], vbuf[1];
+												if(ref->first_kv())
+													do
+													{
+														ref->get_kv(NULL,vbuf);
+														ref2->from(vbuf);
+														NetworkSlot s = new NetworkSlot(ref2);
+														GlobalObject(s);
+														ArrayPushBack(slots,s);
+													} while(ref->next_kv());
+
 												do_deathlink = false;
 												ref->from(parent_ref);
 												if(ref->sub_find({NULL,{"slot_data","death_link"}}))
@@ -610,8 +703,15 @@ namespace Archipelago
 													if(genscr > 0)
 														RunGenericScript(genscr);
 												}
-
-												if(end_on_auth)
+												unless(request_new_datapacks())
+													unless(request_location_info())
+													{
+														send_sync();
+														status = STATUS_DATA_LOADED;
+														if(end_cond == APH_END_DATA)
+															do_exit = true;
+													}
+												if(end_cond == APH_END_AUTH)
 													do_exit = true;
 												break;
 											}
@@ -679,7 +779,7 @@ namespace Archipelago
 													}
 												}
 												disconnect_socket();
-												if(end_on_auth)
+												if(end_cond == APH_END_AUTH)
 													do_exit = true;
 												break;
 											}
@@ -727,7 +827,6 @@ namespace Archipelago
 											{
 												if(ref->sub_find({NULL,{"locations"}}))
 												{
-													NetworkItem items[0];
 													if(ref->first_indx())
 													{
 														NetworkItem itm = new NetworkItem();
@@ -735,11 +834,16 @@ namespace Archipelago
 														{
 															itm->from(ref);
 															if(itm->valid)
+															{
+																cache_location_info(itm);
 																Settings::on_location_scouts(itm);
+															}
 														} while(ref->next_indx());
 														delete itm;
 													}
 												}
+												if(loc_cached_count == num_locs && end_cond == APH_END_DATA)
+													do_exit = true;
 												break;
 											}
 											case "RoomUpdate":
@@ -798,8 +902,27 @@ namespace Archipelago
 												printf("[ERR]: %s\n", msg);
 												break;
 											case "DataPackage":
-												printf("[DATAPACK]: %s\n", msg);
-												//!TODO Do something with these?? idk
+												if(ref->sub_find({NULL,{"data","games"}}))
+												{
+													char32 namebuf[1];
+													if(ref->first_kv())
+														do
+														{
+															ref->get_kv(namebuf,NULL);
+															ref2->from(parent_ref);
+															ref2->sub_find({NULL,{"data","games",namebuf}});
+															process_datapack(namebuf, ref2);
+														} while(ref->next_kv());
+													unless(request_new_datapacks())
+														unless(request_location_info())
+														{
+															send_sync();
+															status = STATUS_DATA_LOADED;
+															if(end_cond == APH_END_DATA)
+																do_exit = true;
+														}
+												}
+												
 												break;
 											default:
 												printf("[???]: %s\n", msg);
@@ -828,7 +951,7 @@ namespace Archipelago
 					}
 					Waitframe();
 				}
-				if(end_on_auth && !sock)
+				if(end_cond != APH_END_NEVER && !sock)
 					break;
 			}
 		}
@@ -862,6 +985,199 @@ namespace Archipelago
 		if(int scr = CheckGenericScript("APHandler"))
 			RunGenericScript(scr, {false});
 		return true;
+	}
+
+	char32 file_read_cache[MAX_INT];
+	char32 datapack_cache[1];
+	void check_datapack_checksum(char32 key, char32 val)
+	{
+		unless(datapack_cache[0])
+		{
+			ResizeArray(datapack_cache,1);
+			file cache;
+			if(cache->Open("APCache.txt"))
+			{
+				cache->ReadString(file_read_cache);
+				cache->Close();
+				sprintf(datapack_cache, "%s", file_read_cache);
+				file_read_cache[0] = 0;
+			}
+			else sprintf(datapack_cache, "{}");
+			cache->Free();
+		}
+		JSONRef ref = new JSONRef(datapack_cache);
+		bool do_update = true;
+		char32 buf[1];
+		if(ref->find({NULL,{key}}))
+		{
+			ref->get_trim(buf);
+			unless(strcmp(val,buf)) //matching checksum
+				do_update = false;
+		}
+		if(do_update)
+			ref->add_key(key,NULL,true);
+		delete ref;
+	}
+	void check_datapack_checksums(JSONRef ref)
+	{
+		datapack_cache[0] = 0;
+		char32 keybuf[1], valbuf[1];
+		if(ref->first_kv())
+			do
+			{
+				ref->get_kv(keybuf, valbuf, true);
+				check_datapack_checksum(keybuf, valbuf);
+			} while(ref->next_kv())
+	}
+	bool request_new_datapacks()
+	{
+		bool ret = false;
+		JSONRef ref = new JSONRef(datapack_cache);
+		char32 request[1];
+		char32 keybuf[1], valbuf[1];
+		if(ref->first_kv())
+			do
+			{
+				ref->get_kv(keybuf, valbuf, true);
+				if(valbuf[0])
+					continue;
+				sprintf(request, "[{\"cmd\":\"GetDataPackage\",\"games\":[\"%s\"]}]",keybuf);
+				sock->Send(request);
+				ret = true;
+				break; //just one at a time! This should be called again from the handler for each datapack
+			} while(ref->next_kv());
+		delete ref;
+		unless(ret)
+		{
+			file cache;
+			if(cache->Create("APCache.txt"))
+			{
+				cache->WriteString(datapack_cache);
+				cache->Close();
+			}
+			cache->Free();
+		}
+		return ret;
+	}
+	void process_datapack(char32 name, JSONRef datapack_ref)
+	{
+		char32 out_json[] = "{}";
+		JSONRef out = new JSONRef(out_json);
+		JSONRef cache = new JSONRef(datapack_cache);
+		char32 kbuf[1], vbuf[1];
+		if(datapack_ref->first_kv())
+			do
+			{
+				datapack_ref->get_kv(kbuf, vbuf, false);
+				switch(kbuf)
+				{
+					case "item_name_to_id":
+					case "location_name_to_id":
+						out->add_key(kbuf,vbuf);
+						break;
+					case "checksum":
+						out->add_key(kbuf,vbuf);
+						cache->add_key(name, vbuf, true);
+						break;
+				}
+			} while(datapack_ref->next_kv());
+		delete cache;
+		delete out;
+
+		char32 fname[1];
+		sprintf(fname, "%s.json", name);
+		file f;
+		unless(f->Create(fname))
+		{
+			f->Free();
+			return;
+		}
+		f->WriteString(out_json);
+		f->Free();
+	}
+	int loc_cached_count;
+	bool request_location_info()
+	{
+		if(location_data_json[0])
+			return false;
+		loc_cached_count = 0;
+		sprintf(location_data_json, "{}");
+		int locs[0];
+		ResizeArray(locs,num_locs);
+		loop(q : 0=..num_locs)
+			locs[q] = q;
+		Archipelago::send_location_scouts_arr(0,locs);
+		return true;
+	}
+	void cache_location_info(NetworkItem itm)
+	{
+		unless(itm->valid)
+			return;
+		++loc_cached_count;
+		char32 buf[] = "{}";
+		JSONRef ref = new JSONRef(buf);
+		ref->add_key_str("item",itm->item_id);
+		ref->add_key_str("location",itm->location_id);
+		ref->add_key_int("player",itm->player_id);
+		ref->add_key_long("flags",itm->flags);
+		NetworkPlayer plr = players[itm->player_id-1];
+		NetworkSlot slot = slots[plr->slot_id-1];
+
+		char32 cache_buf[1], kbuf[1], vbuf[1];
+		load_cache_buf(cache_buf, slot->game);
+		JSONRef cache = new JSONRef(cache_buf);
+		if(cache->sub_find({NULL,{"item_name_to_id"}}))
+		{
+			if(cache->first_kv())
+				do
+				{
+					cache->get_kv(kbuf,vbuf);
+					unless(strcmp(itm->item_id,vbuf))
+					{
+						sprintf(itm->item_name,"%s",kbuf);
+						break;
+					}
+				} while(cache->next_kv())
+		}
+
+		cache_buf[0] = 0;
+		load_cache_buf(cache_buf, slots[ap_player_id-1]->game);
+		cache->from(cache_buf);
+		if(cache->sub_find({NULL,{"location_name_to_id"}}))
+		{
+			if(cache->first_kv())
+				do
+				{
+					cache->get_kv(kbuf,vbuf);
+					unless(strcmp(itm->location_id,vbuf))
+					{
+						sprintf(itm->location_name,"%s",kbuf);
+						break;
+					}
+				} while(cache->next_kv())
+		}
+
+		ref->add_key_str("item_name",itm->item_name);
+		ref->add_key_str("location_name",itm->location_name);
+		ref->from(location_data_json);
+		ref->add_key(itm->location_id, buf, true);
+		delete cache;
+		delete ref;
+	}
+	void load_cache_buf(char32 buf, char32 game)
+	{
+		char32 fname[1];
+		sprintf(fname, "%s.json", game);
+		file f;
+		unless(f->Open(fname))
+		{
+			f->Free();
+			return;
+		}
+		f->ReadString(file_read_cache);
+		sprintf(buf,"%s",file_read_cache);
+		file_read_cache[0] = 0;
+		f->Free();
 	}
 
 	void send_sync()
