@@ -486,11 +486,15 @@ namespace Archipelago
 
 	void on_data_loaded()
 	{
+		int missed_checks[0];
 		for(int q = 0; q < num_locs; ++q)
 		{
 			if(checked_locations_2[q])
 				mark_and_remove_loc(q, true);
+			else if(checked_locations[q])
+				ArrayPushBack(missed_checks, q);
 		}
+		send_location_checks_arr(missed_checks);
 		send_sync();
 	}
 	enum APHandlerEndCond
