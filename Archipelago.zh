@@ -16,7 +16,6 @@ namespace Archipelago
 	long ap_uid;
 
 	bool did_setup = false;
-	bool syncing = false;
 
 	websocket sock;
 	ConnectionStatus status;
@@ -29,10 +28,11 @@ namespace Archipelago
 	long base_id;
 	int num_items, num_locs;
 	bool checked_locations[0];
+	bool checked_locations_2[0];
 	int collected_items[0];
 	NetworkPlayer players[0];
 	NetworkSlot slots[0];
-	char32 location_data_json[1];
+	NetworkItem location_infos[0];
 	//
 	int id_to_index(long id)
 	{
@@ -61,9 +61,11 @@ namespace Archipelago
 		STATUS_DATA_LOADED
 	};
 
-	DEFINEL ITEM_PROGRESSIVE = 001Lb;
-	DEFINEL ITEM_USEFUL      = 010Lb;
-	DEFINEL ITEM_TRAP        = 100Lb;
+	DEFINEL ITEMPROG_FILLER      = 000Lb;
+	DEFINEL ITEMPROG_PROGRESSIVE = 001Lb;
+	DEFINEL ITEMPROG_USEFUL      = 010Lb;
+	DEFINEL ITEMPROG_TRAP        = 100Lb;
+	DEFINEL ITEMPROG_BITS        = 111Lb;
 	class NetworkItem
 	{
 		char32 item_id[1];
@@ -74,7 +76,7 @@ namespace Archipelago
 		//Only has names if filled from DataPackages
 		char32 item_name[1];
 		char32 location_name[1];
-		NetworkItem(char32 iid, char32 lid, int pid, long fl)
+		NetworkItem(char32 iid, char32 lid, int pid, long fl, char32 iname = NULL, char32 lname = NULL)
 		{
 			if(iid)
 				sprintf(item_id,"%s",iid);
@@ -82,6 +84,10 @@ namespace Archipelago
 				sprintf(location_id,"%s",lid);
 			player_id = pid;
 			flags = fl;
+			if(iname)
+				sprintf(item_name,"%s",iname);
+			if(lname)
+				sprintf(location_name,"%s",lname);
 			valid = true;
 		}
 		NetworkItem(JSONRef ref)
@@ -89,6 +95,12 @@ namespace Archipelago
 			from(ref);
 		}
 		NetworkItem();
+		NetworkItem copy()
+		{
+			NetworkItem ret = new NetworkItem(item_id, location_id, player_id, flags, item_name, location_name);
+			ret->valid = valid;
+			return ret;
+		}
 		void from(JSONRef ref)
 		{
 			valid = true;
@@ -132,19 +144,19 @@ namespace Archipelago
 		}
 		bool is_filler()
 		{
-			return !(flags & 111Lb);
+			return (flags & ITEMPROG_BITS) == ITEMPROG_FILLER;
 		}
 		bool is_progression()
 		{
-			return flags & 001Lb;
+			return flags & ITEMPROG_PROGRESSIVE;
 		}
 		bool is_useful()
 		{
-			return flags & 010Lb;
+			return flags & ITEMPROG_USEFUL;
 		}
 		bool is_trap()
 		{
-			return flags & 100Lb;
+			return flags & ITEMPROG_TRAP;
 		}
 		void print()
 		{
@@ -266,9 +278,9 @@ namespace Archipelago
 		{
 			void run()
 			{
-				loop(q : 0=..GENSCR_NUMEVENT)
+				for(int q = 0; q < GENSCR_NUMEVENT; ++q)
 					this->EventListen[q] = q==GENSCR_EVENT_HERO_HIT_2;
-				loop()
+				while(true)
 				{
 					WaitEvent();
 					char32 enemybuf[0];
@@ -346,22 +358,9 @@ namespace Archipelago
 		++collected_items[indx];
 	}
 
-	NetworkItem check_location_info(int indx) //returns NULL or a NetworkItem from the initialized location info
+	NetworkItem check_location_info(int indx)
 	{
-		JSONRef ref = new JSONRef(location_data_json);
-		char32 key[1];
-		sprintf(key, "%l", index_to_id(indx));
-		if(ref->find({NULL,{key}}))
-		{
-			NetworkItem ret = new NetworkItem(ref);
-			delete ref;
-			if(ret->valid)
-				return ret;
-			delete ret;
-			return NULL;
-		}
-		delete ref;
-		return NULL;
+		return location_infos[indx];
 	}
 
 	void connect_socket()
@@ -443,8 +442,6 @@ namespace Archipelago
 		if(sock)
 			sock->Free();
 		sock = NULL;
-		ResizeArray(checked_locations, 0);
-		ResizeArray(collected_items, 0);
 		status = STATUS_DISCONNECTED;
 	}
 	
@@ -487,6 +484,15 @@ namespace Archipelago
 		}
 	}
 
+	void on_data_loaded()
+	{
+		for(int q = 0; q < num_locs; ++q)
+		{
+			if(checked_locations_2[q])
+				mark_and_remove_loc(q, true);
+		}
+		send_sync();
+	}
 	enum APHandlerEndCond
 	{
 		APH_END_NEVER,
@@ -580,8 +586,6 @@ namespace Archipelago
 											}
 											case "Connected":
 											{
-												ResizeArray(checked_locations, 0);
-
 												ref->sub_find({NULL,{"slot"}});
 												ap_player_id = ref->get_int();
 												ref->from(parent_ref);
@@ -616,8 +620,11 @@ namespace Archipelago
 													disconnect_socket();
 													break;
 												}
+												ResizeArray(location_infos, num_locs);
 												ResizeArray(checked_locations, num_locs);
 												ResizeArray(collected_items, num_items);
+												ResizeArray(checked_locations_2, 0);
+												ResizeArray(checked_locations_2, num_locs);
 
 												//not needed?
 												//ref->from(parent_ref);
@@ -629,7 +636,7 @@ namespace Archipelago
 													do
 													{
 														int locid = id_to_index(ref->get_long());
-														checked_locations[locid] = true;
+														checked_locations_2[locid] = true;
 													}
 													while(ref->next_indx());
 												
@@ -704,13 +711,7 @@ namespace Archipelago
 														RunGenericScript(genscr);
 												}
 												unless(request_new_datapacks())
-													unless(request_location_info())
-													{
-														send_sync();
-														status = STATUS_DATA_LOADED;
-														if(end_cond == APH_END_DATA)
-															do_exit = true;
-													}
+													request_location_info();
 												if(end_cond == APH_END_AUTH)
 													do_exit = true;
 												break;
@@ -725,19 +726,126 @@ namespace Archipelago
 													if(ref->find({{q},{"data"}}))
 													{
 														char32 buf[1];
-														char32 buf2[1];
+														char32 text_buf[1], type_buf[1], player_buf[1], flags_buf[1];
 														if(ref->first_indx())
 															do
 															{
+																type_buf[0] = text_buf[0] = player_buf[0] = flags_buf[0] = 0;
 																ref2->from(ref);
 																if(ref2->sub_find({NULL,{"text"}}))
+																	ref2->get_trim(text_buf);
+																ref2->from(ref);
+																if(ref2->sub_find({NULL,{"type"}}))
+																	ref2->get_trim(type_buf);
+																ref2->from(ref);
+																if(ref2->sub_find({NULL,{"player"}}))
+																	ref2->get_trim(player_buf);
+																ref2->from(ref);
+																if(ref2->sub_find({NULL,{"flags"}}))
+																	ref2->get_trim(flags_buf);
+																
+																switch(type_buf)
 																{
-																	if(buf[0])
+																	case "item_id":
 																	{
-																		ref2->get_trim(buf2);
-																		sprintf(buf, "%s %s", buf, buf2);
+																		NetworkPlayer plyr = players[atoi(player_buf)-1];
+																		NetworkSlot slot = slots[plyr->slot_id-1];
+
+																		char32 cache_buf[1], kbuf[1], vbuf[1];
+																		load_cache_buf(cache_buf, slot->game);
+																		JSONRef cache = new JSONRef(cache_buf);
+																		bool found = false;
+																		if(cache->sub_find({NULL,{"item_name_to_id"}}))
+																		{
+																			if(cache->first_kv())
+																				do
+																				{
+																					cache->get_kv(kbuf,vbuf);
+																					unless(strcmp(text_buf,vbuf))
+																					{
+																						sprintf(text_buf,"%s",kbuf);
+																						found = true;
+																						break;
+																					}
+																				} while(cache->next_kv())
+																		}
+																		unless(found)
+																			sprintf(text_buf, "UNKNOWN ITM: %s", text_buf);
+
+																		sprintf(buf, "%s%s", buf, text_buf);
+																		long flags = atol(flags_buf);
+																		if(flags)
+																		{
+																			bool comma = false;
+																			for(int q = 0; q < 3; ++q)
+																			{
+																				long bit = 1Lb << q;
+																				if(flags & bit)
+																				{
+																					sprintf(buf, "%s%s", buf, comma ? "," : " [");
+																					switch(bit)
+																					{
+																						case ITEMPROG_PROGRESSIVE:
+																							sprintf(buf, "%sProgressive", buf);
+																							break;
+																						case ITEMPROG_USEFUL:
+																							sprintf(buf, "%sUseful", buf);
+																							break;
+																						case ITEMPROG_TRAP:
+																							sprintf(buf, "%sTrap", buf);
+																							break;
+																					}
+																					comma = true;
+																				}
+																			}
+																			sprintf(buf, "%s]", buf);
+																		}
+																		delete cache;
+																		break;
 																	}
-																	else ref2->get_trim(buf);
+																	case "location_id":
+																	{
+																		NetworkPlayer plyr = players[atoi(player_buf)-1];
+																		NetworkSlot slot = slots[plyr->slot_id-1];
+
+																		char32 cache_buf[1], kbuf[1], vbuf[1];
+																		load_cache_buf(cache_buf, slot->game);
+																		JSONRef cache = new JSONRef(cache_buf);
+																		bool found = false;
+																		if(cache->sub_find({NULL,{"location_name_to_id"}}))
+																		{
+																			if(cache->first_kv())
+																				do
+																				{
+																					cache->get_kv(kbuf,vbuf);
+																					unless(strcmp(text_buf,vbuf))
+																					{
+																						sprintf(text_buf,"%s",kbuf);
+																						found = true;
+																						break;
+																					}
+																				} while(cache->next_kv())
+																		}
+																		unless(found)
+																			sprintf(text_buf, "UNKNOWN LOC: %s", text_buf);
+
+																		sprintf(buf, "%s%s", buf, text_buf);
+																		delete cache;
+																		break;
+																	}
+																	case "player_id":
+																	{
+																		NetworkPlayer plyr = players[atoi(text_buf)-1];
+																		NetworkSlot slot = slots[plyr->slot_id-1];
+																		sprintf(buf, "%s%s", buf, slot->name);
+																		break;
+																	}
+																	default:
+																		if(AP_DEV_LOG)
+																			printf("[DEV] UNKNOWN PrintJSON Type: %s\n", type_buf);
+																	//fallthrough
+																	case "":
+																		sprintf(buf, "%s%s", buf, text_buf);
 																}
 															} while(ref->next_indx());
 														if(SizeOfArray(buf) > 30 && buf[-7] == '/'
@@ -785,12 +893,8 @@ namespace Archipelago
 											}
 											case "ReceivedItems":
 											{
-												if(syncing)
-													ref->print();
-												if(ref->sub_find({NULL,"items"}))
+												if(ref->sub_find({NULL,{"items"}}))
 												{
-													int sync_count[0];
-													ResizeArray(sync_count, num_items);
 													if(ref->first_indx())
 													{
 														NetworkItem itm = new NetworkItem();
@@ -799,27 +903,18 @@ namespace Archipelago
 															itm->from(ref);
 															if(itm->valid)
 															{
-																if(itm->player_id == ap_player_id)
-																{
-																	int indx = itm->localize_location_id();
-																	mark_location_checked(indx);
-																	Settings::do_remove_location(indx);
-																}
 																int item_indx = itm->localize_item_id();
-																if(syncing)
+																if(itm->player_id == ap_player_id)
+																	mark_and_remove_loc(item_indx, true);
+																else
 																{
-																	int idx = item_indx;
-																	++sync_count[idx];
-																	if(sync_count[idx] <= collected_items[idx])
-																		continue; //already collected
+																	mark_item_collected(item_indx);
+																	Settings::on_item_received(itm, collected_item(item_indx));
 																}
-																mark_item_collected(item_indx);
-																Settings::on_item_received(itm, collected_item(item_indx));
 															}
 														} while(ref->next_indx());
 														delete itm;
 													}
-													syncing = false;
 												}
 												break;
 											}
@@ -842,8 +937,13 @@ namespace Archipelago
 														delete itm;
 													}
 												}
-												if(loc_cached_count == num_locs && end_cond == APH_END_DATA)
-													do_exit = true;
+												if(loc_cached_count == num_locs)
+												{
+													on_data_loaded();
+													status = STATUS_DATA_LOADED;
+													if(end_cond == APH_END_DATA)
+														do_exit = true;
+												}
 												break;
 											}
 											case "RoomUpdate":
@@ -857,8 +957,7 @@ namespace Archipelago
 														do
 														{
 															int id = id_to_index(ref->get_long());
-															mark_location_checked(id);
-															Settings::do_remove_location(id);
+															mark_and_remove_loc(id, true);
 														} while(ref->next_indx());
 												break;
 											}
@@ -914,13 +1013,7 @@ namespace Archipelago
 															process_datapack(namebuf, ref2);
 														} while(ref->next_kv());
 													unless(request_new_datapacks())
-														unless(request_location_info())
-														{
-															send_sync();
-															status = STATUS_DATA_LOADED;
-															if(end_cond == APH_END_DATA)
-																do_exit = true;
-														}
+														request_location_info();
 												}
 												
 												break;
@@ -1098,33 +1191,26 @@ namespace Archipelago
 	int loc_cached_count;
 	bool request_location_info()
 	{
-		if(location_data_json[0])
-			return false;
+		unless(location_infos[0])
 		loc_cached_count = 0;
-		sprintf(location_data_json, "{}");
 		int locs[0];
 		ResizeArray(locs,num_locs);
-		loop(q : 0=..num_locs)
+		for(int q = 0; q < num_locs; ++q)
 			locs[q] = q;
 		Archipelago::send_location_scouts_arr(0,locs);
 		return true;
 	}
-	void cache_location_info(NetworkItem itm)
+	void fetch_item_names(NetworkItem itm, bool for_local)
 	{
-		unless(itm->valid)
-			return;
-		++loc_cached_count;
-		char32 buf[] = "{}";
-		JSONRef ref = new JSONRef(buf);
-		ref->add_key_str("item",itm->item_id);
-		ref->add_key_str("location",itm->location_id);
-		ref->add_key_int("player",itm->player_id);
-		ref->add_key_long("flags",itm->flags);
 		NetworkPlayer plr = players[itm->player_id-1];
 		NetworkSlot slot = slots[plr->slot_id-1];
+		NetworkSlot slot2 = slots[ap_player_id-1];
+
+		NetworkSlot item_slot = for_local ? slot2 : slot;
+		NetworkSlot loc_slot = for_local ? slot : slot2;
 
 		char32 cache_buf[1], kbuf[1], vbuf[1];
-		load_cache_buf(cache_buf, slot->game);
+		load_cache_buf(cache_buf, item_slot->game);
 		JSONRef cache = new JSONRef(cache_buf);
 		if(cache->sub_find({NULL,{"item_name_to_id"}}))
 		{
@@ -1141,7 +1227,7 @@ namespace Archipelago
 		}
 
 		cache_buf[0] = 0;
-		load_cache_buf(cache_buf, slots[ap_player_id-1]->game);
+		load_cache_buf(cache_buf, loc_slot->game);
 		cache->from(cache_buf);
 		if(cache->sub_find({NULL,{"location_name_to_id"}}))
 		{
@@ -1157,12 +1243,22 @@ namespace Archipelago
 				} while(cache->next_kv())
 		}
 
-		ref->add_key_str("item_name",itm->item_name);
-		ref->add_key_str("location_name",itm->location_name);
-		ref->from(location_data_json);
-		ref->add_key(itm->location_id, buf, true);
 		delete cache;
-		delete ref;
+	}
+	void cache_location_info(NetworkItem itm)
+	{
+		unless(itm->valid)
+			return;
+		++loc_cached_count;
+		fetch_item_names(itm,false);
+
+		int indx = itm->localize_location_id();
+		if(indx >= SizeOfArray(location_infos))
+			ResizeArray(location_infos, indx+1);
+		if(location_infos[indx])
+			delete location_infos[indx];
+		location_infos[indx] = itm->copy();
+		GlobalObject(location_infos[indx]);
 	}
 	void load_cache_buf(char32 buf, char32 game)
 	{
@@ -1180,6 +1276,24 @@ namespace Archipelago
 		f->Free();
 	}
 
+	void mark_and_remove_loc(int indx, bool do_recv_itm = false)
+	{
+		if(do_recv_itm && !checked_location(indx))
+		{
+			if(auto itm = location_infos[indx])
+			{
+				if(itm->player_id == ap_player_id)
+				{
+					int item_indx = itm->localize_item_id();
+					mark_item_collected(item_indx);
+					Settings::on_item_received(itm, collected_item(item_indx));
+				}
+			}
+		}
+		mark_location_checked(indx);
+		Settings::do_remove_location(indx);
+	}
+
 	void send_sync()
 	{
 		unless(socket_valid()) return;
@@ -1187,12 +1301,12 @@ namespace Archipelago
 		if(AP_LOG_COMMUNICATION > 1)
 			printf("[SEND] %s\n", msg);
 		sock->Send(msg);
-		syncing = true;
 	}
 
 	void send_location_checks_arr(int locations)
 	{
 		unless(socket_valid()) return;
+		unless(SizeOfArray(locations)) return;
 		char32 msg[] = "[{\"cmd\":\"LocationChecks\",\"locations\":[]}]";
 		JSONRef ref = new JSONRef(msg);
 		ref->find({{0},{"locations"}});
@@ -1215,11 +1329,11 @@ namespace Archipelago
 		DEFINE MAX_PER_PACKET = 75; //limits the size of return packets, to prevent going over MAX_INT characters
 		char32 msg[1];
 		JSONRef ref = new JSONRef(msg);
-		loop(packet : 0=..Ceiling(sz/MAX_PER_PACKET))
+		for(int packet = 0; packet < Ceiling(sz/MAX_PER_PACKET); ++packet)
 		{
 			sprintf(msg, "[{\"cmd\":\"LocationScouts\",\"locations\":[],\"create_as_hint\":%d}]",hint_mode);
 			ref->find({{0},{"locations"}});
-			loop(q : (packet*MAX_PER_PACKET)=..Min(sz,(packet+1)*MAX_PER_PACKET))
+			for(int q = (packet*MAX_PER_PACKET); q < Min(sz,(packet+1)*MAX_PER_PACKET); ++q)
 				ref->add_indx_long(index_to_id(locations[q]));
 			if(AP_LOG_COMMUNICATION > 1)
 				printf("[SEND] %s\n", msg);
