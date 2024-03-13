@@ -516,539 +516,543 @@ namespace Archipelago
 					Waitframe();
 				while(sock && update_socket() && !do_exit)
 				{
+					if(end_cond != APH_END_NEVER && !sock)
+						do_exit = true;
+					if(end_cond == APH_END_AUTH && status >= STATUS_AUTHENTICATED)
+						do_exit = true;
+					if(end_cond == APH_END_DATA && status >= STATUS_DATA_LOADED)
+						do_exit = true;
 					while(sock && sock->HasMessage && !do_exit)
-					{
-						char32 msg = sock->Receive();
-						switch(sock->MessageType)
-						{
-							case WEBSOCKET_MESSAGE_TYPE_TEXT:
-							{
-								if(AP_LOG_COMMUNICATION > 1)
-									printf("[RECV]: %s\n", msg);
-								JSONRef parent_ref = new JSONRef(msg);
-								JSONRef ref = new JSONRef(msg);
-								JSONRef ref2 = new JSONRef(msg);
-								parent_ref->find({{-1}});
-
-								JSONRef resp = new JSONRef();
-
-								char32 buf[1];
-
-								int q = 0;
-								if(parent_ref->first_indx())
-									do
-									{
-										ref->from(parent_ref);
-										if(ref->sub_find({NULL,{"cmd"}}))
-										{
-											ref->get_trim(buf);
-										}
-										else continue;
-										ref->from(parent_ref);
-										ref2->from(ref);
-
-										char32 response[] = "[{}]";
-										resp->strptr = response;
-										resp->find({{0},{""}});
-										
-										if(AP_LOG_COMMUNICATION)
-											printf("[COMMAND] %s\n", buf);
-										switch(buf)
-										{
-											case "RoomInfo":
-											{
-												ref->sub_find({NULL,{"seed_name"}});
-												ref->get_trim(seed);
-												ref->from(parent_ref);
-												ref->sub_find({NULL,{"datapackage_checksums"}});
-												check_datapack_checksums(ref);
-
-												char32 gamebuf[1];
-												Settings::ap_get_game(gamebuf);
-												resp->add_key_str("cmd","Connect");
-												resp->add_key_str("game", gamebuf);
-												resp->add_key_str("name", slot);
-												resp->add_key_str("password", pwd);
-												resp->add_key_long("uuid", ap_uid);
-												resp->add_key("tags", "[]");
-												resp->add_key("version", "{}");
-												resp->add_key_long("items_handling", Settings::items_handling());
-												resp->add_key_bool("slot_data", true);
-												resp->find({{0},{"tags"}});
-												Settings::add_tags(resp);
-												resp->find({{0},{"version"}});
-												// AP 0.4.4
-												resp->add_key_int("major",0);
-												resp->add_key_int("minor",4);
-												resp->add_key_int("build",4);
-												resp->add_key_str("class","Version");
-												
-												status = STATUS_CONNECTED;
-												ref->from(parent_ref);
-												Settings::on_room_info(ref);
-												break;
-											}
-											case "Connected":
-											{
-												ref->sub_find({NULL,{"slot"}});
-												ap_player_id = ref->get_int();
-												ref->from(parent_ref);
-												ref->sub_find({NULL,{"team"}});
-												ap_player_team = ref->get_int();
-												ref->from(parent_ref);
-												ref->sub_find({NULL,{"slot_data"}});
-												ref2->from(ref);
-												if(ref2->sub_find({NULL,{"base_id"}}))
-													base_id = ref2->get_long();
-												else
-												{
-													printf("No 'base_id' found in 'slot_data'! Connection failed!\n");
-													disconnect_socket();
-													break;
-												}
-												ref2->from(ref);
-												if(ref2->sub_find({NULL,{"num_items"}}))
-													num_items = ref2->get_int();
-												else
-												{
-													printf("No 'num_items' found in 'slot_data'! Connection failed!\n");
-													disconnect_socket();
-													break;
-												}
-												ref2->from(ref);
-												if(ref2->sub_find({NULL,{"num_locs"}}))
-													num_locs = ref2->get_int();
-												else
-												{
-													printf("No 'num_locs' found in 'slot_data'! Connection failed!\n");
-													disconnect_socket();
-													break;
-												}
-												ResizeArray(location_infos, num_locs);
-												ResizeArray(checked_locations, num_locs);
-												ResizeArray(collected_items, num_items);
-												ResizeArray(checked_locations_2, 0);
-												ResizeArray(checked_locations_2, num_locs);
-
-												//not needed?
-												//ref->from(parent_ref);
-												//ref->sub_find({NULL,{"missing_locations"}});
-												
-												ref->from(parent_ref);
-												ref->sub_find({NULL,{"checked_locations"}});
-												if(ref->first_indx())
-													do
-													{
-														int locid = id_to_index(ref->get_long());
-														checked_locations_2[locid] = true;
-													}
-													while(ref->next_indx());
-												
-												ref->from(parent_ref);
-												ref->sub_find({NULL,{"players"}});
-												for(p : players)
-													delete p;
-												ResizeArray(players, 0);
-												if(ref->first_indx())
-													do
-													{
-														NetworkPlayer p = new NetworkPlayer(ref);
-														GlobalObject(p);
-														ArrayPushBack(players,p);
-													}
-													while(ref->next_indx());
-												
-												ref->from(parent_ref);
-												ref->sub_find({NULL,{"slot_info"}});
-												for(s : slots)
-													delete s;
-												ResizeArray(slots, 0);
-												char32 kbuf[1], vbuf[1];
-												if(ref->first_kv())
-													do
-													{
-														ref->get_kv(NULL,vbuf);
-														ref2->from(vbuf);
-														NetworkSlot s = new NetworkSlot(ref2);
-														GlobalObject(s);
-														ArrayPushBack(slots,s);
-													} while(ref->next_kv());
-
-												do_deathlink = false;
-												ref->from(parent_ref);
-												if(ref->sub_find({NULL,{"slot_data","death_link"}}))
-													if(ref->get_bool())
-														do_deathlink = true;
-												ref->from(parent_ref);
-												if(ref->sub_find({NULL,{"slot_data","DeathLink"}}))
-													if(ref->get_bool())
-														do_deathlink = true;
-												ref->from(parent_ref);
-												if(ref->sub_find({NULL,{"slot_data","deathlink_amnesty"}}))
-													deathlink_amnesty = ref->get_int();
-												else if(ref->sub_find({NULL,{"slot_data","DeathLinkAmnesty"}}))
-													deathlink_amnesty = ref->get_int();
-												else deathlink_amnesty = 0;
-												
-												if(AP_LOG)
-													printf("Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
-												if(AP_DEV_LOG)
-													printf("[DEV] ap_player_id = %d, ap_player_team = %d, deathlink = %s, amnesty = %d\n", ap_player_id, ap_player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
-												status = STATUS_AUTHENTICATED;
-												ref->from(parent_ref);
-												Settings::on_connected(ref);
-												unless(sock)
-													break;
-
-												if(do_deathlink)
-												{
-													resp->add_key_str("cmd","ConnectUpdate");
-													resp->add_key("tags", "[]");
-													resp->find({{0},{"tags"}});
-													resp->add_indx_str("DeathLink");
-													Settings::add_tags(resp);
-
-													if(Game->GetHeroScript("AP_DeathLink_OnDeath") != 3)
-														printf("Script 'AP_DeathLink_OnDeath' needs to be assigned to the 'onDeath' slot for 'DeathLink' to work!\n");
-													int genscr = Game->GetGenericScript("AP_DeathLink_OnDamage");
-													if(genscr > 0)
-														RunGenericScript(genscr);
-												}
-												unless(request_new_datapacks())
-													request_location_info();
-												if(end_cond == APH_END_AUTH)
-													do_exit = true;
-												break;
-											}
-											case "PrintJSON":
-											{
-												bool pr = Settings::on_print_json(ref);
-												unless(sock)
-													break;
-												if(pr)
-												{
-													if(ref->find({{q},{"data"}}))
-													{
-														char32 buf[1];
-														char32 text_buf[1], type_buf[1], player_buf[1], flags_buf[1];
-														if(ref->first_indx())
-															do
-															{
-																type_buf[0] = text_buf[0] = player_buf[0] = flags_buf[0] = 0;
-																ref2->from(ref);
-																if(ref2->sub_find({NULL,{"text"}}))
-																	ref2->get_trim(text_buf);
-																ref2->from(ref);
-																if(ref2->sub_find({NULL,{"type"}}))
-																	ref2->get_trim(type_buf);
-																ref2->from(ref);
-																if(ref2->sub_find({NULL,{"player"}}))
-																	ref2->get_trim(player_buf);
-																ref2->from(ref);
-																if(ref2->sub_find({NULL,{"flags"}}))
-																	ref2->get_trim(flags_buf);
-																
-																switch(type_buf)
-																{
-																	case "item_id":
-																	{
-																		NetworkPlayer plyr = players[atoi(player_buf)-1];
-																		NetworkSlot slot = slots[plyr->slot_id-1];
-
-																		char32 cache_buf[1], kbuf[1], vbuf[1];
-																		load_cache_buf(cache_buf, slot->game);
-																		JSONRef cache = new JSONRef(cache_buf);
-																		bool found = false;
-																		if(cache->sub_find({NULL,{"item_name_to_id"}}))
-																		{
-																			if(cache->first_kv())
-																				do
-																				{
-																					cache->get_kv(kbuf,vbuf);
-																					unless(strcmp(text_buf,vbuf))
-																					{
-																						sprintf(text_buf,"%s",kbuf);
-																						found = true;
-																						break;
-																					}
-																				} while(cache->next_kv())
-																		}
-																		unless(found)
-																			sprintf(text_buf, "UNKNOWN ITM: %s", text_buf);
-
-																		sprintf(buf, "%s%s", buf, text_buf);
-																		long flags = atol(flags_buf);
-																		if(flags)
-																		{
-																			bool comma = false;
-																			for(int q = 0; q < 3; ++q)
-																			{
-																				long bit = 1Lb << q;
-																				if(flags & bit)
-																				{
-																					sprintf(buf, "%s%s", buf, comma ? "," : " [");
-																					switch(bit)
-																					{
-																						case ITEMPROG_PROGRESSIVE:
-																							sprintf(buf, "%sProgressive", buf);
-																							break;
-																						case ITEMPROG_USEFUL:
-																							sprintf(buf, "%sUseful", buf);
-																							break;
-																						case ITEMPROG_TRAP:
-																							sprintf(buf, "%sTrap", buf);
-																							break;
-																					}
-																					comma = true;
-																				}
-																			}
-																			sprintf(buf, "%s]", buf);
-																		}
-																		delete cache;
-																		break;
-																	}
-																	case "location_id":
-																	{
-																		NetworkPlayer plyr = players[atoi(player_buf)-1];
-																		NetworkSlot slot = slots[plyr->slot_id-1];
-
-																		char32 cache_buf[1], kbuf[1], vbuf[1];
-																		load_cache_buf(cache_buf, slot->game);
-																		JSONRef cache = new JSONRef(cache_buf);
-																		bool found = false;
-																		if(cache->sub_find({NULL,{"location_name_to_id"}}))
-																		{
-																			if(cache->first_kv())
-																				do
-																				{
-																					cache->get_kv(kbuf,vbuf);
-																					unless(strcmp(text_buf,vbuf))
-																					{
-																						sprintf(text_buf,"%s",kbuf);
-																						found = true;
-																						break;
-																					}
-																				} while(cache->next_kv())
-																		}
-																		unless(found)
-																			sprintf(text_buf, "UNKNOWN LOC: %s", text_buf);
-
-																		sprintf(buf, "%s%s", buf, text_buf);
-																		delete cache;
-																		break;
-																	}
-																	case "player_id":
-																	{
-																		NetworkPlayer plyr = players[atoi(text_buf)-1];
-																		NetworkSlot slot = slots[plyr->slot_id-1];
-																		sprintf(buf, "%s%s", buf, slot->name);
-																		break;
-																	}
-																	default:
-																		if(AP_DEV_LOG)
-																			printf("[DEV] UNKNOWN PrintJSON Type: %s\n", type_buf);
-																	//fallthrough
-																	case "":
-																		sprintf(buf, "%s%s", buf, text_buf);
-																}
-															} while(ref->next_indx());
-														if(SizeOfArray(buf) > 30 && buf[-7] == '/'
-															&& buf[-6] == 'h' && buf[-5] == 'e'
-															&& buf[-4] == 'l' && buf[-3] == 'p')
-														{
-															if(AP_LOG_COMMUNICATION)
-																printf("[BLOCKED] Useless help message\n");
-															break; //skip help message, doesn't apply
-														}
-														printf("[AP] %s\n", buf);
-													}
-												}
-												break;
-											}
-											case "ConnectionRefused":
-											{
-												if(ref->sub_find({NULL,{"errors"}}))
-												{
-													if(ref->first_indx())
-													{
-														char32 buf[0];
-														ref->get_trim(buf);
-														switch(buf)
-														{
-															case "InvalidSlot":
-																printf("[AP] Connection Error: The slot '%s' was not found!\n", slot);
-																break;
-															case "InvalidPassword":
-																printf("[AP] Connection Error: The password was incorrect!\n");
-																break;
-															//case "InvalidGame":
-															//case "IncompatibleVersion":
-															//case "InvalidItemsHandling":
-															default:
-																printf("[AP] Connection Error: %s\n", buf);
-																break;
-														}
-													}
-												}
-												disconnect_socket();
-												if(end_cond == APH_END_AUTH)
-													do_exit = true;
-												break;
-											}
-											case "ReceivedItems":
-											{
-												if(ref->sub_find({NULL,{"items"}}))
-												{
-													if(ref->first_indx())
-													{
-														NetworkItem itm = new NetworkItem();
-														do
-														{
-															itm->from(ref);
-															if(itm->valid)
-															{
-																int item_indx = itm->localize_item_id();
-																if(itm->player_id == ap_player_id)
-																	mark_and_remove_loc(item_indx, true);
-																else
-																{
-																	mark_item_collected(item_indx);
-																	Settings::on_item_received(itm, collected_item(item_indx));
-																}
-															}
-														} while(ref->next_indx());
-														delete itm;
-													}
-												}
-												break;
-											}
-											case "LocationInfo":
-											{
-												if(ref->sub_find({NULL,{"locations"}}))
-												{
-													if(ref->first_indx())
-													{
-														NetworkItem itm = new NetworkItem();
-														do
-														{
-															itm->from(ref);
-															if(itm->valid)
-															{
-																cache_location_info(itm);
-																Settings::on_location_scouts(itm);
-															}
-														} while(ref->next_indx());
-														delete itm;
-													}
-												}
-												if(loc_cached_count == num_locs)
-												{
-													on_data_loaded();
-													status = STATUS_DATA_LOADED;
-													if(end_cond == APH_END_DATA)
-														do_exit = true;
-												}
-												break;
-											}
-											case "RoomUpdate":
-											{
-												ref->print();
-												Settings::on_room_update(ref);
-												unless(sock)
-													break;
-												if(ref->find({{q},{"checked_locations"}}))
-													if(ref->first_indx())
-														do
-														{
-															int id = id_to_index(ref->get_long());
-															mark_and_remove_loc(id, true);
-														} while(ref->next_indx());
-												break;
-											}
-											case "Bounced":
-											{
-												Settings::on_bounced(ref);
-												ref->from(parent_ref);
-												if(ref->find({{q},{"tags"}}))
-												{
-													if(ref->first_indx())
-														do
-														{
-															char32 buf[1];
-															ref->get_trim(buf);
-															unless(strcmp(buf,"DeathLink"))
-															{
-																char32 sbuf[1];
-																char32 cbuf[1];
-																if(ref->find({{q},{"data","source"}}))
-																	ref->get_trim(sbuf);
-																if(ref->find({{q},{"data","cause"}}))
-																	ref->get_trim(cbuf);
-																DeathLink::death_recv(sbuf,cbuf);
-																break;
-															}
-														} while(ref->next_indx());
-												}
-												break;
-											}
-											case "Retrieved":
-											{
-												Settings::on_retrieved(ref);
-												break;
-											}
-											case "SetReply":
-											{
-												Settings::on_set_reply(ref);
-												break;
-											}
-											case "InvalidPacket":
-												printf("[ERR]: %s\n", msg);
-												break;
-											case "DataPackage":
-												if(ref->sub_find({NULL,{"data","games"}}))
-												{
-													char32 namebuf[1];
-													if(ref->first_kv())
-														do
-														{
-															ref->get_kv(namebuf,NULL);
-															ref2->from(parent_ref);
-															ref2->sub_find({NULL,{"data","games",namebuf}});
-															process_datapack(namebuf, ref2);
-														} while(ref->next_kv());
-													unless(request_new_datapacks())
-														request_location_info();
-												}
-												
-												break;
-											default:
-												printf("[???]: %s\n", msg);
-												break;
-										}
-										unless(sock)
-											break;
-										if(strlen(response) > 4)
-										{
-											if(AP_LOG_COMMUNICATION > 1)
-												printf("[SEND] %s\n", response);
-											sock->Send(response);
-										}
-									} while(++q && parent_ref->next_indx());
-
-								delete parent_ref;
-								delete ref;
-								delete ref2;
-								delete resp;
-								break;
-							}
-							default:
-								printf("[RECV UNKNOWN]: '%ad'\n", msg);
-								break;
-						}
-					}
+						handle_single_msg();
 					Waitframe();
 				}
 				if(end_cond != APH_END_NEVER && !sock)
+					break;
+			}
+		}
+		void handle_single_msg()
+		{
+			unless(sock && sock->HasMessage)
+				return;
+			char32 msg = sock->Receive();
+			switch(sock->MessageType)
+			{
+				case WEBSOCKET_MESSAGE_TYPE_TEXT:
+				{
+					if(AP_LOG_COMMUNICATION > 1)
+						printf("[RECV]: %s\n", msg);
+					JSONRef parent_ref = new JSONRef(msg);
+					JSONRef ref = new JSONRef(msg);
+					JSONRef ref2 = new JSONRef(msg);
+					parent_ref->find({{-1}});
+
+					JSONRef resp = new JSONRef();
+
+					char32 buf[1];
+
+					int q = 0;
+					if(parent_ref->first_indx())
+						do
+						{
+							ref->from(parent_ref);
+							if(ref->sub_find({NULL,{"cmd"}}))
+							{
+								ref->get_trim(buf);
+							}
+							else continue;
+							ref->from(parent_ref);
+							ref2->from(ref);
+
+							char32 response[] = "[{}]";
+							resp->strptr = response;
+							resp->find({{0},{""}});
+							
+							if(AP_LOG_COMMUNICATION)
+								printf("[COMMAND] %s\n", buf);
+							switch(buf)
+							{
+								case "RoomInfo":
+								{
+									ref->sub_find({NULL,{"seed_name"}});
+									ref->get_trim(seed);
+									ref->from(parent_ref);
+									ref->sub_find({NULL,{"datapackage_checksums"}});
+									check_datapack_checksums(ref);
+
+									char32 gamebuf[1];
+									Settings::ap_get_game(gamebuf);
+									resp->add_key_str("cmd","Connect");
+									resp->add_key_str("game", gamebuf);
+									resp->add_key_str("name", slot);
+									resp->add_key_str("password", pwd);
+									resp->add_key_long("uuid", ap_uid);
+									resp->add_key("tags", "[]");
+									resp->add_key("version", "{}");
+									resp->add_key_long("items_handling", Settings::items_handling());
+									resp->add_key_bool("slot_data", true);
+									resp->find({{0},{"tags"}});
+									Settings::add_tags(resp);
+									resp->find({{0},{"version"}});
+									// AP 0.4.4
+									resp->add_key_int("major",0);
+									resp->add_key_int("minor",4);
+									resp->add_key_int("build",4);
+									resp->add_key_str("class","Version");
+									
+									status = STATUS_CONNECTED;
+									ref->from(parent_ref);
+									Settings::on_room_info(ref);
+									break;
+								}
+								case "Connected":
+								{
+									ref->sub_find({NULL,{"slot"}});
+									ap_player_id = ref->get_int();
+									ref->from(parent_ref);
+									ref->sub_find({NULL,{"team"}});
+									ap_player_team = ref->get_int();
+									ref->from(parent_ref);
+									ref->sub_find({NULL,{"slot_data"}});
+									ref2->from(ref);
+									if(ref2->sub_find({NULL,{"base_id"}}))
+										base_id = ref2->get_long();
+									else
+									{
+										printf("No 'base_id' found in 'slot_data'! Connection failed!\n");
+										disconnect_socket();
+										break;
+									}
+									ref2->from(ref);
+									if(ref2->sub_find({NULL,{"num_items"}}))
+										num_items = ref2->get_int();
+									else
+									{
+										printf("No 'num_items' found in 'slot_data'! Connection failed!\n");
+										disconnect_socket();
+										break;
+									}
+									ref2->from(ref);
+									if(ref2->sub_find({NULL,{"num_locs"}}))
+										num_locs = ref2->get_int();
+									else
+									{
+										printf("No 'num_locs' found in 'slot_data'! Connection failed!\n");
+										disconnect_socket();
+										break;
+									}
+									ResizeArray(location_infos, num_locs);
+									ResizeArray(checked_locations, num_locs);
+									ResizeArray(collected_items, num_items);
+									ResizeArray(checked_locations_2, 0);
+									ResizeArray(checked_locations_2, num_locs);
+
+									//not needed?
+									//ref->from(parent_ref);
+									//ref->sub_find({NULL,{"missing_locations"}});
+									
+									ref->from(parent_ref);
+									ref->sub_find({NULL,{"checked_locations"}});
+									if(ref->first_indx())
+										do
+										{
+											int locid = id_to_index(ref->get_long());
+											checked_locations_2[locid] = true;
+										}
+										while(ref->next_indx());
+									
+									ref->from(parent_ref);
+									ref->sub_find({NULL,{"players"}});
+									for(p : players)
+										delete p;
+									ResizeArray(players, 0);
+									if(ref->first_indx())
+										do
+										{
+											NetworkPlayer p = new NetworkPlayer(ref);
+											GlobalObject(p);
+											ArrayPushBack(players,p);
+										}
+										while(ref->next_indx());
+									
+									ref->from(parent_ref);
+									ref->sub_find({NULL,{"slot_info"}});
+									for(s : slots)
+										delete s;
+									ResizeArray(slots, 0);
+									char32 kbuf[1], vbuf[1];
+									if(ref->first_kv())
+										do
+										{
+											ref->get_kv(NULL,vbuf);
+											ref2->from(vbuf);
+											NetworkSlot s = new NetworkSlot(ref2);
+											GlobalObject(s);
+											ArrayPushBack(slots,s);
+										} while(ref->next_kv());
+
+									do_deathlink = false;
+									ref->from(parent_ref);
+									if(ref->sub_find({NULL,{"slot_data","death_link"}}))
+										if(ref->get_bool())
+											do_deathlink = true;
+									ref->from(parent_ref);
+									if(ref->sub_find({NULL,{"slot_data","DeathLink"}}))
+										if(ref->get_bool())
+											do_deathlink = true;
+									ref->from(parent_ref);
+									if(ref->sub_find({NULL,{"slot_data","deathlink_amnesty"}}))
+										deathlink_amnesty = ref->get_int();
+									else if(ref->sub_find({NULL,{"slot_data","DeathLinkAmnesty"}}))
+										deathlink_amnesty = ref->get_int();
+									else deathlink_amnesty = 0;
+									
+									if(AP_LOG)
+										printf("Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
+									if(AP_DEV_LOG)
+										printf("[DEV] ap_player_id = %d, ap_player_team = %d, deathlink = %s, amnesty = %d\n", ap_player_id, ap_player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
+									status = STATUS_AUTHENTICATED;
+									ref->from(parent_ref);
+									Settings::on_connected(ref);
+									unless(sock)
+										break;
+
+									if(do_deathlink)
+									{
+										resp->add_key_str("cmd","ConnectUpdate");
+										resp->add_key("tags", "[]");
+										resp->find({{0},{"tags"}});
+										resp->add_indx_str("DeathLink");
+										Settings::add_tags(resp);
+
+										if(Game->GetHeroScript("AP_DeathLink_OnDeath") != 3)
+											printf("Script 'AP_DeathLink_OnDeath' needs to be assigned to the 'onDeath' slot for 'DeathLink' to work!\n");
+										int genscr = Game->GetGenericScript("AP_DeathLink_OnDamage");
+										if(genscr > 0)
+											RunGenericScript(genscr);
+									}
+									unless(request_new_datapacks())
+										request_location_info();
+									break;
+								}
+								case "PrintJSON":
+								{
+									bool pr = Settings::on_print_json(ref);
+									unless(sock)
+										break;
+									if(pr)
+									{
+										if(ref->find({{q},{"data"}}))
+										{
+											char32 buf[1];
+											char32 text_buf[1], type_buf[1], player_buf[1], flags_buf[1];
+											if(ref->first_indx())
+												do
+												{
+													type_buf[0] = text_buf[0] = player_buf[0] = flags_buf[0] = 0;
+													ref2->from(ref);
+													if(ref2->sub_find({NULL,{"text"}}))
+														ref2->get_trim(text_buf);
+													ref2->from(ref);
+													if(ref2->sub_find({NULL,{"type"}}))
+														ref2->get_trim(type_buf);
+													ref2->from(ref);
+													if(ref2->sub_find({NULL,{"player"}}))
+														ref2->get_trim(player_buf);
+													ref2->from(ref);
+													if(ref2->sub_find({NULL,{"flags"}}))
+														ref2->get_trim(flags_buf);
+													
+													switch(type_buf)
+													{
+														case "item_id":
+														{
+															NetworkPlayer plyr = players[atoi(player_buf)-1];
+															NetworkSlot slot = slots[plyr->slot_id-1];
+
+															char32 cache_buf[1], kbuf[1], vbuf[1];
+															load_cache_buf(cache_buf, slot->game);
+															JSONRef cache = new JSONRef(cache_buf);
+															bool found = false;
+															if(cache->sub_find({NULL,{"item_name_to_id"}}))
+															{
+																if(cache->first_kv())
+																	do
+																	{
+																		cache->get_kv(kbuf,vbuf);
+																		unless(strcmp(text_buf,vbuf))
+																		{
+																			sprintf(text_buf,"%s",kbuf);
+																			found = true;
+																			break;
+																		}
+																	} while(cache->next_kv())
+															}
+															unless(found)
+																sprintf(text_buf, "UNKNOWN ITM: %s", text_buf);
+
+															sprintf(buf, "%s%s", buf, text_buf);
+															long flags = atol(flags_buf);
+															if(flags)
+															{
+																bool comma = false;
+																for(int q = 0; q < 3; ++q)
+																{
+																	long bit = 1Lb << q;
+																	if(flags & bit)
+																	{
+																		sprintf(buf, "%s%s", buf, comma ? "," : " [");
+																		switch(bit)
+																		{
+																			case ITEMPROG_PROGRESSIVE:
+																				sprintf(buf, "%sProgressive", buf);
+																				break;
+																			case ITEMPROG_USEFUL:
+																				sprintf(buf, "%sUseful", buf);
+																				break;
+																			case ITEMPROG_TRAP:
+																				sprintf(buf, "%sTrap", buf);
+																				break;
+																		}
+																		comma = true;
+																	}
+																}
+																sprintf(buf, "%s]", buf);
+															}
+															delete cache;
+															break;
+														}
+														case "location_id":
+														{
+															NetworkPlayer plyr = players[atoi(player_buf)-1];
+															NetworkSlot slot = slots[plyr->slot_id-1];
+
+															char32 cache_buf[1], kbuf[1], vbuf[1];
+															load_cache_buf(cache_buf, slot->game);
+															JSONRef cache = new JSONRef(cache_buf);
+															bool found = false;
+															if(cache->sub_find({NULL,{"location_name_to_id"}}))
+															{
+																if(cache->first_kv())
+																	do
+																	{
+																		cache->get_kv(kbuf,vbuf);
+																		unless(strcmp(text_buf,vbuf))
+																		{
+																			sprintf(text_buf,"%s",kbuf);
+																			found = true;
+																			break;
+																		}
+																	} while(cache->next_kv())
+															}
+															unless(found)
+																sprintf(text_buf, "UNKNOWN LOC: %s", text_buf);
+
+															sprintf(buf, "%s%s", buf, text_buf);
+															delete cache;
+															break;
+														}
+														case "player_id":
+														{
+															NetworkPlayer plyr = players[atoi(text_buf)-1];
+															NetworkSlot slot = slots[plyr->slot_id-1];
+															sprintf(buf, "%s%s", buf, slot->name);
+															break;
+														}
+														default:
+															if(AP_DEV_LOG)
+																printf("[DEV] UNKNOWN PrintJSON Type: %s\n", type_buf);
+														//fallthrough
+														case "":
+															sprintf(buf, "%s%s", buf, text_buf);
+													}
+												} while(ref->next_indx());
+											if(SizeOfArray(buf) > 30 && buf[-7] == '/'
+												&& buf[-6] == 'h' && buf[-5] == 'e'
+												&& buf[-4] == 'l' && buf[-3] == 'p')
+											{
+												if(AP_LOG_COMMUNICATION)
+													printf("[BLOCKED] Useless help message\n");
+												break; //skip help message, doesn't apply
+											}
+											printf("[AP] %s\n", buf);
+										}
+									}
+									break;
+								}
+								case "ConnectionRefused":
+								{
+									if(ref->sub_find({NULL,{"errors"}}))
+									{
+										if(ref->first_indx())
+										{
+											char32 buf[0];
+											ref->get_trim(buf);
+											switch(buf)
+											{
+												case "InvalidSlot":
+													printf("[AP] Connection Error: The slot '%s' was not found!\n", slot);
+													break;
+												case "InvalidPassword":
+													printf("[AP] Connection Error: The password was incorrect!\n");
+													break;
+												//case "InvalidGame":
+												//case "IncompatibleVersion":
+												//case "InvalidItemsHandling":
+												default:
+													printf("[AP] Connection Error: %s\n", buf);
+													break;
+											}
+										}
+									}
+									disconnect_socket();
+									break;
+								}
+								case "ReceivedItems":
+								{
+									if(ref->sub_find({NULL,{"items"}}))
+									{
+										if(ref->first_indx())
+										{
+											NetworkItem itm = new NetworkItem();
+											do
+											{
+												itm->from(ref);
+												if(itm->valid)
+												{
+													int item_indx = itm->localize_item_id();
+													if(itm->player_id == ap_player_id)
+														mark_and_remove_loc(item_indx, true);
+													else
+													{
+														mark_item_collected(item_indx);
+														Settings::on_item_received(itm, collected_item(item_indx));
+													}
+												}
+											} while(ref->next_indx());
+											delete itm;
+										}
+									}
+									break;
+								}
+								case "LocationInfo":
+								{
+									if(ref->sub_find({NULL,{"locations"}}))
+									{
+										if(ref->first_indx())
+										{
+											NetworkItem itm = new NetworkItem();
+											do
+											{
+												itm->from(ref);
+												if(itm->valid)
+												{
+													cache_location_info(itm);
+													Settings::on_location_scouts(itm);
+												}
+											} while(ref->next_indx());
+											delete itm;
+										}
+									}
+									if(loc_cached_count == num_locs)
+									{
+										on_data_loaded();
+										status = STATUS_DATA_LOADED;
+									}
+									break;
+								}
+								case "RoomUpdate":
+								{
+									ref->print();
+									Settings::on_room_update(ref);
+									unless(sock)
+										break;
+									if(ref->find({{q},{"checked_locations"}}))
+										if(ref->first_indx())
+											do
+											{
+												int id = id_to_index(ref->get_long());
+												mark_and_remove_loc(id, true);
+											} while(ref->next_indx());
+									break;
+								}
+								case "Bounced":
+								{
+									Settings::on_bounced(ref);
+									ref->from(parent_ref);
+									if(ref->find({{q},{"tags"}}))
+									{
+										if(ref->first_indx())
+											do
+											{
+												char32 buf[1];
+												ref->get_trim(buf);
+												unless(strcmp(buf,"DeathLink"))
+												{
+													char32 sbuf[1];
+													char32 cbuf[1];
+													if(ref->find({{q},{"data","source"}}))
+														ref->get_trim(sbuf);
+													if(ref->find({{q},{"data","cause"}}))
+														ref->get_trim(cbuf);
+													DeathLink::death_recv(sbuf,cbuf);
+													break;
+												}
+											} while(ref->next_indx());
+									}
+									break;
+								}
+								case "Retrieved":
+								{
+									Settings::on_retrieved(ref);
+									break;
+								}
+								case "SetReply":
+								{
+									Settings::on_set_reply(ref);
+									break;
+								}
+								case "InvalidPacket":
+									printf("[ERR]: %s\n", msg);
+									break;
+								case "DataPackage":
+									if(ref->sub_find({NULL,{"data","games"}}))
+									{
+										char32 namebuf[1];
+										if(ref->first_kv())
+											do
+											{
+												ref->get_kv(namebuf,NULL);
+												ref2->from(parent_ref);
+												ref2->sub_find({NULL,{"data","games",namebuf}});
+												process_datapack(namebuf, ref2);
+											} while(ref->next_kv());
+										unless(request_new_datapacks())
+											request_location_info();
+									}
+									
+									break;
+								default:
+									printf("[???]: %s\n", msg);
+									break;
+							}
+							unless(sock)
+								break;
+							if(strlen(response) > 4)
+							{
+								if(AP_LOG_COMMUNICATION > 1)
+									printf("[SEND] %s\n", response);
+								sock->Send(response);
+							}
+						} while(++q && parent_ref->next_indx());
+
+					delete parent_ref;
+					delete ref;
+					delete ref2;
+					delete resp;
+					break;
+				}
+				default:
+					printf("[RECV UNKNOWN]: '%ad'\n", msg);
 					break;
 			}
 		}
@@ -1195,7 +1199,12 @@ namespace Archipelago
 	int loc_cached_count;
 	bool request_location_info()
 	{
-		unless(location_infos[0])
+		if(location_infos[0])
+		{
+			on_data_loaded();
+			status = STATUS_DATA_LOADED;
+			return false;
+		}
 		loc_cached_count = 0;
 		int locs[0];
 		ResizeArray(locs,num_locs);
