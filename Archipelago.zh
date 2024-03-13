@@ -538,12 +538,12 @@ namespace Archipelago
 								if(parent_ref->first_indx())
 									do
 									{
-										if(parent_ref->find({{q},{"cmd"}}))
+										ref->from(parent_ref);
+										if(ref->sub_find({NULL,{"cmd"}}))
 										{
-											parent_ref->get_trim(buf);
+											ref->get_trim(buf);
 										}
 										else continue;
-										parent_ref->find({{q}});
 										ref->from(parent_ref);
 										ref2->from(ref);
 

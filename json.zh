@@ -65,7 +65,7 @@ namespace JSON
 				return;
 			}
 			ResizeArray(buf, end-start+1);
-			loop(q : 0=..(end-start))
+			for(int q = 0; q < end-start; ++q)
 				buf[q] = strptr[q+start];
 			buf[-1] = 0;
 		}
@@ -88,7 +88,7 @@ namespace JSON
 				ResizeArray(keybuf,0);
 			if(valbuf)
 				ResizeArray(valbuf,0);
-			loop(q : _start=.._end)
+			for(int q = _start; q < _end; ++q)
 			{
 				bool in_quotes = quoted;
 				if(strptr[q] == '"')
@@ -126,7 +126,7 @@ namespace JSON
 				keyref->from(this);
 			if(valref)
 				valref->from(this);
-			loop(q : _start=.._end)
+			for(int q = _start; q < _end; ++q)
 			{
 				if(strptr[q] == '"')
 				{
@@ -614,7 +614,7 @@ namespace JSON
 						ArrayPushBack(brackets, '[');
 						int brack_level = SizeOfArray(brackets);
 						int _start = 0, _end = 0;
-						loop(q : 0=..=val)
+						for(int q = 0; q <= val; ++q)
 						{
 							_start = indx;
 							_end = 0;
@@ -1049,7 +1049,7 @@ namespace JSON
 		{
 			const int ex_len = strlen(strptr)-end;
 			ResizeArray(buf, ex_len+1);
-			loop(q : 0=..ex_len)
+			for(int q = 0; q < ex_len; ++q)
 				buf[q] = strptr[q+end];
 			buf[-1] = 0;
 		}
