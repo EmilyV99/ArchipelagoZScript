@@ -34,6 +34,11 @@ namespace JSON
 		}
 		void from(char32 newstr)
 		{
+			if(newstr[-1])
+			{
+				ResizeArray(newstr, SizeOfArray(newstr)+1);
+				newstr[-1] = 0;
+			}
 			strptr = newstr;
 			start = 0;
 			end = strlen(newstr);
@@ -65,7 +70,7 @@ namespace JSON
 				return;
 			}
 			ResizeArray(buf, end-start+1);
-			for(int q = 0; q < end-start; ++q)
+			for(int q = 0; q < end-start && strptr[q]; ++q)
 				buf[q] = strptr[q+start];
 			buf[-1] = 0;
 		}
@@ -137,7 +142,11 @@ namespace JSON
 						{
 							if(quoted)
 								valref->start = q;
-							else valref->end = q+1;
+							else
+							{
+								valref->end = q+1;
+								return;
+							}
 						}
 					}
 					else
@@ -163,6 +172,30 @@ namespace JSON
 					val_mode = true;
 			}
 		}
+		void set_kv(char32 key, char32 val, bool valstr = false)
+		{
+			JSONRef kref = new JSONRef(strptr);
+			JSONRef vref = new JSONRef(strptr);
+			int diff = 0;
+			to_kv(kref,vref);
+			if(key)
+			{
+				int oend = kref->end;
+				kref->set_str(key);
+				diff += kref->end-oend;
+			}
+			if(val)
+			{
+				int oend = vref->end;
+				if(valstr)
+					vref->set_str(val);
+				else vref->set(val);
+				diff += kref->end-oend;
+			}
+			delete kref;
+			delete vref;
+			end += diff;
+		}
 		int get_int()
 		{
 			char32 buf[0];
@@ -187,9 +220,11 @@ namespace JSON
 				return;
 			char32 postbuf[0];
 			scrape_postbuf(postbuf);
+			int osz = strlen(strptr);
 			ResizeArray(strptr, start+1);
 			strptr[-1] = 0;
 			sprintf(strptr, "%s%s%s", strptr, buf, postbuf);
+			end += strlen(strptr)-osz;
 		}
 		void set_str(char32 buf)
 		{
@@ -197,9 +232,11 @@ namespace JSON
 				return;
 			char32 postbuf[0];
 			scrape_postbuf(postbuf);
+			int osz = strlen(strptr);
 			ResizeArray(strptr, start+1);
 			strptr[-1] = 0;
 			sprintf(strptr, "%s\"%s\"%s", strptr, buf, postbuf);
+			end += strlen(strptr)-osz;
 		}
 		bool valid()
 		{
@@ -995,7 +1032,6 @@ namespace JSON
 				return false;
 			if(listtype != JS_Object || type != JS_KV)
 				return false;
-			
 			int brackets[0];
 			ArrayPushBack(brackets, '{');
 			int brack_level = SizeOfArray(brackets);
@@ -1003,6 +1039,8 @@ namespace JSON
 			int indx = _start;
 			until(_end)
 			{
+				if(indx >= SizeOfArray(strptr) || !strptr[indx])
+					return false;
 				if(brackets[-1] == '"' && strptr[indx] != '"')
 				{
 					++indx;
@@ -1047,6 +1085,11 @@ namespace JSON
 
 		void scrape_postbuf(char32 buf)
 		{
+			if(strptr[-1])
+			{
+				ResizeArray(strptr, SizeOfArray(strptr)+1);
+				strptr[-1] = 0;
+			}
 			const int ex_len = strlen(strptr)-end;
 			ResizeArray(buf, ex_len+1);
 			for(int q = 0; q < ex_len; ++q)

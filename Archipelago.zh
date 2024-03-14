@@ -1037,6 +1037,7 @@ namespace Archipelago
 							}
 							unless(sock)
 								break;
+							
 							if(strlen(response) > 4)
 							{
 								if(AP_LOG_COMMUNICATION > 1)
@@ -1090,8 +1091,26 @@ namespace Archipelago
 
 	char32 file_read_cache[MAX_INT];
 	char32 datapack_cache[1];
+	bool validate_datapack(char32 key, char32 val)
+	{
+		char32 buf[1];
+		load_cache_buf(buf, key);
+		bool valid = false;
+		JSONRef ref = new JSONRef(buf);
+		
+		if(ref->find({NULL,{"checksum"}}))
+		{
+			char32 checksum[1];
+			ref->get_trim(checksum);
+			unless(strcmp(val,checksum))
+				valid = true;
+		}
+		delete ref;
+		return valid;
+	}
 	void check_datapack_checksum(char32 key, char32 val)
 	{
+		JSONRef ref = new JSONRef(datapack_cache);
 		unless(datapack_cache[0])
 		{
 			ResizeArray(datapack_cache,1);
@@ -1102,11 +1121,20 @@ namespace Archipelago
 				cache->Close();
 				sprintf(datapack_cache, "%s", file_read_cache);
 				file_read_cache[0] = 0;
+				ref->from(datapack_cache);
+				char32 keybuf[1], valbuf[1];
+				if(ref->first_kv())
+					do
+					{
+						ref->get_kv(keybuf, valbuf, true);
+						unless(validate_datapack(keybuf, valbuf))
+							ref->set_kv(NULL,"",true);
+					} while(ref->next_kv());
 			}
 			else sprintf(datapack_cache, "{}");
 			cache->Free();
+			ref->from(datapack_cache);
 		}
-		JSONRef ref = new JSONRef(datapack_cache);
 		bool do_update = true;
 		char32 buf[1];
 		if(ref->find({NULL,{key}}))
@@ -1115,6 +1143,7 @@ namespace Archipelago
 			unless(strcmp(val,buf)) //matching checksum
 				do_update = false;
 		}
+		ref->from(datapack_cache);
 		if(do_update)
 			ref->add_key(key,NULL,true);
 		delete ref;
@@ -1128,7 +1157,7 @@ namespace Archipelago
 			{
 				ref->get_kv(keybuf, valbuf, true);
 				check_datapack_checksum(keybuf, valbuf);
-			} while(ref->next_kv())
+			} while(ref->next_kv());
 	}
 	bool request_new_datapacks()
 	{
