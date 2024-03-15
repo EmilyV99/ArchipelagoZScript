@@ -2,9 +2,9 @@
 namespace Archipelago
 {
 	using namespace JSON;
-	CONFIGB AP_LOG = true;
-	CONFIG AP_LOG_COMMUNICATION = 1; // 0 = none, 1 = some, 2 = full
-	CONFIGB AP_DEV_LOG = true;
+	CONFIGB AP_LOG = false; //toggles most general logging
+	CONFIG AP_LOG_COMMUNICATION = 0; // 0 = none, 1 = some, 2 = full // logs packets sent/received
+	CONFIGB AP_DEV_LOG = false; //toggles debug logging
 	//This data can be freely modified
 	int quitkey = KEY_Q;
 	//This data should not be modified unless you know what you are doing
@@ -467,8 +467,7 @@ namespace Archipelago
 	{
 		if(!sock || sock->State == WEBSOCKET_STATE_CLOSED)
 		{
-			if(AP_LOG)
-				printf("Disconnected from Archipelago");
+			printf("[CONNECT] Disconnected from Archipelago");
 			return retry();
 		}
 		return true;
@@ -621,7 +620,8 @@ namespace Archipelago
 										base_id = ref2->get_long();
 									else
 									{
-										printf("No 'base_id' found in 'slot_data'! Connection failed!\n");
+										if(AP_LOG)
+											printf("No 'base_id' found in 'slot_data'! Connection failed!\n");
 										disconnect_socket();
 										break;
 									}
@@ -630,7 +630,8 @@ namespace Archipelago
 										num_items = ref2->get_int();
 									else
 									{
-										printf("No 'num_items' found in 'slot_data'! Connection failed!\n");
+										if(AP_LOG)
+											printf("No 'num_items' found in 'slot_data'! Connection failed!\n");
 										disconnect_socket();
 										break;
 									}
@@ -639,7 +640,8 @@ namespace Archipelago
 										num_locs = ref2->get_int();
 									else
 									{
-										printf("No 'num_locs' found in 'slot_data'! Connection failed!\n");
+										if(AP_LOG)
+											printf("No 'num_locs' found in 'slot_data'! Connection failed!\n");
 										disconnect_socket();
 										break;
 									}
@@ -709,8 +711,7 @@ namespace Archipelago
 										deathlink_amnesty = ref->get_int();
 									else deathlink_amnesty = 0;
 									
-									if(AP_LOG)
-										printf("Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
+									printf("[CONNECT] Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
 									if(AP_DEV_LOG)
 										printf("[DEV] ap_player_id = %d, ap_player_team = %d, deathlink = %s, amnesty = %d\n", ap_player_id, ap_player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
 									status = STATUS_AUTHENTICATED;
@@ -727,7 +728,7 @@ namespace Archipelago
 										resp->add_indx_str("DeathLink");
 										Settings::add_tags(resp);
 
-										if(Game->GetHeroScript("AP_DeathLink_OnDeath") != 3)
+										if(AP_LOG && Game->GetHeroScript("AP_DeathLink_OnDeath") != 3)
 											printf("Script 'AP_DeathLink_OnDeath' needs to be assigned to the 'onDeath' slot for 'DeathLink' to work!\n");
 										int genscr = Game->GetGenericScript("AP_DeathLink_OnDamage");
 										if(genscr > 0)
@@ -893,16 +894,19 @@ namespace Archipelago
 											switch(buf)
 											{
 												case "InvalidSlot":
-													printf("[AP] Connection Error: The slot '%s' was not found!\n", slot);
+													if(AP_LOG)
+														printf("[AP] Connection Error: The slot '%s' was not found!\n", slot);
 													break;
 												case "InvalidPassword":
-													printf("[AP] Connection Error: The password was incorrect!\n");
+													if(AP_LOG)
+														printf("[AP] Connection Error: The password was incorrect!\n");
 													break;
 												//case "InvalidGame":
 												//case "IncompatibleVersion":
 												//case "InvalidItemsHandling":
 												default:
-													printf("[AP] Connection Error: %s\n", buf);
+													if(AP_LOG)
+														printf("[AP] Connection Error: %s\n", buf);
 													break;
 											}
 										}
@@ -965,7 +969,6 @@ namespace Archipelago
 								}
 								case "RoomUpdate":
 								{
-									ref->print();
 									Settings::on_room_update(ref);
 									unless(sock)
 										break;
@@ -1015,7 +1018,8 @@ namespace Archipelago
 									break;
 								}
 								case "InvalidPacket":
-									printf("[ERR]: %s\n", msg);
+									if(AP_LOG)
+										printf("[ERR]: InvalidPacket - %s\n", msg);
 									break;
 								case "DataPackage":
 									if(ref->sub_find({NULL,{"data","games"}}))
@@ -1035,7 +1039,8 @@ namespace Archipelago
 									
 									break;
 								default:
-									printf("[???]: %s\n", msg);
+									if(AP_LOG)
+										printf("[???]: Unknown Response - %s\n", msg);
 									break;
 							}
 							unless(sock)
@@ -1056,7 +1061,8 @@ namespace Archipelago
 					break;
 				}
 				default:
-					printf("[RECV UNKNOWN]: '%ad'\n", msg);
+					if(AP_LOG)
+						printf("[RECV UNKNOWN]: '%ad'\n", msg);
 					break;
 			}
 		}
