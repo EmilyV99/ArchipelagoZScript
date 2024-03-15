@@ -283,7 +283,7 @@ namespace Archipelago
 				while(true)
 				{
 					WaitEvent();
-					char32 enemybuf[0];
+					char32 enemybuf[256];
 					switch(Game->EventData[GENEV_HEROHIT_HITTYPE])
 					{
 						case OBJTYPE_NPC:
@@ -327,10 +327,13 @@ namespace Archipelago
 
 		void death_recv(char32 source, char32 cause)
 		{
+			unless(strcmp(death_alias,source)) //don't kill yourself!
+				return;
 			if(cause[0])
 				printf("[DEATHLINK] Perished due to: %s\n", cause);
 			else printf("[DEATHLINK] Perished due to: %s died\n", source);
 			Hero->Kill(true);
+			--AP_DeathLink_OnDeath.cur_amnesty; //don't send another deathlink from this...
 		}
 	}
 
