@@ -499,15 +499,9 @@ namespace Archipelago
 		send_location_checks_arr(missed_checks);
 		send_sync();
 	}
-	enum APHandlerEndCond
-	{
-		APH_END_NEVER,
-		APH_END_AUTH,
-		APH_END_DATA
-	};
 	generic script APHandler
 	{
-		void run(APHandlerEndCond end_cond)
+		void run()
 		{
 			#option STRING_SWITCH_CASE_INSENSITIVE on
 			ap_setup();
@@ -518,18 +512,10 @@ namespace Archipelago
 					Waitframe();
 				while(sock && update_socket() && !do_exit)
 				{
-					if(end_cond != APH_END_NEVER && !sock)
-						do_exit = true;
-					if(end_cond == APH_END_AUTH && status >= STATUS_AUTHENTICATED)
-						do_exit = true;
-					if(end_cond == APH_END_DATA && status >= STATUS_DATA_LOADED)
-						do_exit = true;
 					while(sock && sock->HasMessage && !do_exit)
 						handle_single_msg();
 					Waitframe();
 				}
-				if(end_cond != APH_END_NEVER && !sock)
-					break;
 			}
 		}
 		void handle_single_msg()
@@ -1095,7 +1081,7 @@ namespace Archipelago
 		unless(sock)
 			return false;
 		if(int scr = CheckGenericScript("APHandler"))
-			RunGenericScript(scr, {false});
+			RunGenericScript(scr);
 		return true;
 	}
 
