@@ -713,7 +713,7 @@ namespace Archipelago
 									
 									printf("[CONNECT] Connected to Archipelago (%s:%s as %s)\n",ip,port,slot);
 									if(AP_DEV_LOG)
-										printf("[DEV] ap_player_id = %d, ap_player_team = %d, deathlink = %s, amnesty = %d\n", ap_player_id, ap_player_team, do_deathlink ? "true" : "false", deathlink_amnesty);
+										printf("[DEV] ap_player_id = %d, ap_player_team = %d, ap_uid = %l, deathlink = %s, amnesty = %d\n", ap_player_id, ap_player_team, ap_uid, do_deathlink ? "true" : "false", deathlink_amnesty);
 									status = STATUS_AUTHENTICATED;
 									ref->from(parent_ref);
 									Settings::on_connected(ref);
@@ -1084,6 +1084,7 @@ namespace Archipelago
 
 	bool ap_connect(char32 _ip, char32 _port, char32 _slot, char32 _pwd, char32 _death_alias = NULL)
 	{
+		ap_setup();
 		disconnect_socket();
 		sprintf(ip,"%s",_ip[0] ? _ip : "archipelago.gg");
 		sprintf(port,"%s",_port[0] ? _port : "38281");
