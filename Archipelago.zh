@@ -2,7 +2,7 @@
 namespace Archipelago
 {
 	using namespace JSON;
-	CONFIGB AP_LOG = false; //toggles most general logging
+	CONFIGB AP_LOG = true; //toggles most general logging
 	CONFIG AP_LOG_COMMUNICATION = 0; // 0 = none, 1 = some, 2 = full // logs packets sent/received
 	CONFIGB AP_DEV_LOG = false; //toggles debug logging
 	//This data can be freely modified
