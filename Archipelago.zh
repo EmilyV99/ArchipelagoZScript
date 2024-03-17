@@ -27,6 +27,7 @@ namespace Archipelago
 	char32 seed[1];
 	long base_id;
 	int num_items, num_locs;
+	int last_recv_indx;
 	bool checked_locations[0];
 	bool checked_locations_2[0];
 	int collected_items[0];
@@ -902,28 +903,37 @@ namespace Archipelago
 								}
 								case "ReceivedItems":
 								{
-									if(ref->sub_find({NULL,{"items"}}))
+									ref2->from(ref);
+									if(ref2->sub_find({NULL,{"index"}}))
 									{
-										if(ref->first_indx())
+										int indx = ref2->get_int();
+										if(ref->sub_find({NULL,{"items"}}))
 										{
-											NetworkItem itm = new NetworkItem();
-											do
+											if(ref->first_indx())
 											{
-												itm->from(ref);
-												if(itm->valid)
+												if(++indx <= last_recv_indx)
+													continue;
+												NetworkItem itm = new NetworkItem();
+												do
 												{
-													int item_indx = itm->localize_item_id();
-													if(itm->player_id == ap_player_id)
-														mark_and_remove_loc(item_indx, true);
-													else
+													itm->from(ref);
+													if(itm->valid)
 													{
-														mark_item_collected(item_indx);
-														Settings::on_item_received(itm, collected_item(item_indx));
+														int item_indx = itm->localize_item_id();
+														if(itm->player_id == ap_player_id)
+															mark_and_remove_loc(item_indx, true);
+														else
+														{
+															mark_item_collected(item_indx);
+															Settings::on_item_received(itm, collected_item(item_indx));
+														}
 													}
-												}
-											} while(ref->next_indx());
-											delete itm;
+												} while(ref->next_indx());
+												delete itm;
+											}
 										}
+										if(indx >= last_recv_indx)
+											last_recv_indx = indx;
 									}
 									break;
 								}
