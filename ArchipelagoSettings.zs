@@ -71,6 +71,11 @@ namespace Archipelago::Settings
 		//https://github.com/ArchipelagoMW/Archipelago/blob/main/docs/network%20protocol.md#SetReply
 		
 	}
+	void do_unremove_location(int id)
+	{
+		//forcibly mark this location as "not collected"
+
+	}
 	void do_remove_location(int id)
 	{
 		//forcibly mark this location as "already collected"

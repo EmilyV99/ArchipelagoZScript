@@ -26,10 +26,11 @@ namespace Archipelago
 	int ap_player_id, ap_player_team;
 	char32 seed[1];
 	long base_id;
-	int num_items, num_locs;
+	int num_items, num_locs, num_locs_checked;
 	int last_recv_indx;
 	bool checked_locations[0];
 	bool checked_locations_2[0];
+	bool removed_locations[0];
 	int collected_items[0];
 	NetworkPlayer players[0];
 	NetworkSlot slots[0];
@@ -251,6 +252,7 @@ namespace Archipelago
 		void on_bounced(JSONRef ref);
 		void on_retrieved(JSONRef ref);
 		void on_set_reply(JSONRef ref);
+		void do_unremove_location(int id);
 		void do_remove_location(int id);
 	}
 	namespace DeathLink
@@ -355,11 +357,18 @@ namespace Archipelago
 
 	void mark_location_checked(int indx)
 	{
+		if(checked_locations[indx]) return;
 		checked_locations[indx] = true;
+		++num_locs_checked;
 	}
 	void mark_item_collected(int indx)
 	{
 		++collected_items[indx];
+	}
+
+	bool checked_all_locations()
+	{
+		return num_locs == num_locs_checked;
 	}
 
 	NetworkItem check_location_info(int indx)
@@ -496,6 +505,8 @@ namespace Archipelago
 				mark_and_remove_loc(q, true);
 			else if(checked_locations[q])
 				ArrayPushBack(missed_checks, q);
+			else if(removed_locations[q])
+				Settings::do_unremove_location(q);
 		}
 		send_location_checks_arr(missed_checks);
 		send_sync();
@@ -524,6 +535,7 @@ namespace Archipelago
 			unless(sock && sock->HasMessage)
 				return;
 			char32 msg = sock->Receive();
+			unless(msg) return;
 			switch(sock->MessageType)
 			{
 				case WEBSOCKET_MESSAGE_TYPE_TEXT:
@@ -637,10 +649,19 @@ namespace Archipelago
 									ResizeArray(collected_items, num_items);
 									ResizeArray(checked_locations_2, 0);
 									ResizeArray(checked_locations_2, num_locs);
+									ResizeArray(removed_locations, 0);
+									ResizeArray(removed_locations, num_locs);
 
-									//not needed?
-									//ref->from(parent_ref);
-									//ref->sub_find({NULL,{"missing_locations"}});
+									ref->from(parent_ref);
+									ref->sub_find({NULL,{"missing_locations"}});
+									if(ref->first_indx())
+										do
+										{
+											int locid = id_to_index(ref->get_long());
+											unless(checked_location(locid))
+												removed_locations[locid] = true;
+										}
+										while(ref->next_indx());
 									
 									ref->from(parent_ref);
 									ref->sub_find({NULL,{"checked_locations"}});
@@ -1236,9 +1257,10 @@ namespace Archipelago
 	{
 		if(location_infos[0])
 		{
-			on_data_loaded();
-			status = STATUS_DATA_LOADED;
-			return false;
+			for(loc : location_infos)
+				delete loc;
+			ResizeArray(location_infos, 0);
+			ResizeArray(location_infos, num_locs);
 		}
 		loc_cached_count = 0;
 		int locs[0];
